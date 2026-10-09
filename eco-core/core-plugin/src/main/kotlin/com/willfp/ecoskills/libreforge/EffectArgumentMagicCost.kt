@@ -15,7 +15,11 @@ class EffectArgumentMagicCost(private val type: MagicType) : EffectArgument<NoCo
 
         val cost = element.config.getIntFromExpression("${type.id}_cost", player)
 
-        return player.magic[type] >= cost
+        val balance = player.magic[type]
+        traceMagicCost(player) {
+            "Magic cost check: player=${player.name} resource=${type.id} cost=$cost balance=$balance allowed=${balance >= cost}"
+        }
+        return balance >= cost
     }
 
     override fun ifMet(element: ConfigurableElement, trigger: DispatchedTrigger, compileData: NoCompileData) {
@@ -23,6 +27,11 @@ class EffectArgumentMagicCost(private val type: MagicType) : EffectArgument<NoCo
 
         val cost = element.config.getIntFromExpression("${type.id}_cost", player)
 
+        val before = player.magic[type]
         player.magic[type] -= cost
+        val after = player.magic[type]
+        traceMagicCost(player) {
+            "Magic cost payment: player=${player.name} resource=${type.id} cost=$cost before=$before after=$after"
+        }
     }
 }

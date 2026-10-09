@@ -5,11 +5,21 @@ dependencies {
     compileOnly("io.papermc.paper:paper-api:1.21.8-R0.1-SNAPSHOT")
 
     implementation("com.willfp:ecomponent:1.5.0")
+    testImplementation("org.junit.jupiter:junit-jupiter:5.13.4")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
 tasks {
     build {
         dependsOn(publishToMavenLocal)
+    }
+
+    test {
+        useJUnitPlatform()
+    }
+
+    compileTestKotlin {
+        compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
     }
 }
 

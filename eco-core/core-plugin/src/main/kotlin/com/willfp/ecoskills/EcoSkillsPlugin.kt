@@ -39,6 +39,7 @@ import com.willfp.ecoskills.libreforge.TriggerRegenMagic
 import com.willfp.ecoskills.magic.MagicHandler
 import com.willfp.ecoskills.magic.MagicListener
 import com.willfp.ecoskills.magic.MagicTypes
+import com.willfp.ecoskills.regeneration.RegenerationHungerListener
 import com.willfp.ecoskills.skills.EcoSkillsSkillTopPlaceholder
 import com.willfp.ecoskills.skills.EcoSkillsTopPlaceholder
 import com.willfp.ecoskills.skills.Skills
@@ -97,9 +98,11 @@ class EcoSkillsPlugin : LibreforgePlugin() {
         com.willfp.libreforge.effects.Effects.register(EffectMultiplyStatTemporarily)
         com.willfp.libreforge.effects.Effects.register(EffectMagicRegenMultiplier)
         Triggers.register(TriggerGainSkillXp)
+        Triggers.register(com.willfp.ecoskills.libreforge.TriggerSkillMobKill)
         Triggers.register(TriggerLevelUpSkill)
         Triggers.register(TriggerRegenMagic)
         Filters.register(FilterSkill)
+        Filters.register(com.willfp.ecoskills.libreforge.FilterSkillMobType)
         Filters.register(FilterSkillCrit)
         Filters.register(FilterMagicType)
         Filters.register(FilterIsAbility)
@@ -108,9 +111,11 @@ class EcoSkillsPlugin : LibreforgePlugin() {
     override fun handleEnable() {
         registerSpecificHolderProvider<Player> { player ->
             if (player.isInDisabledWorld) emptyList() else
-                (Effects.values() union Stats.values())
-                    .mapNotNull { it.getLevelHolder(it.getActualLevel(player)) }
-                    .map { SimpleProvidedHolder(it) }
+                collectProvidedLevelHolders(
+                    Effects.values() union Stats.values(),
+                    { it.getLevelHolder(it.getActualLevel(player)) },
+                    { SimpleProvidedHolder(it) }
+                )
         }
 
         if (this.configYml.getBool("leaderboard.enabled")) {
@@ -147,7 +152,8 @@ class EcoSkillsPlugin : LibreforgePlugin() {
             MagicListener,
             HealthScaleDisabler,
             ActionBarGamemodeListener,
-            StatModifierListener
+            StatModifierListener,
+            RegenerationHungerListener
         )
     }
 

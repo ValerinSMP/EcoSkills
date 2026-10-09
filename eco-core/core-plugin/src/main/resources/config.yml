@@ -1,5 +1,12 @@
 #
 # EcoSkills
+# Optional temporary diagnostics. Empty player filter logs nobody.
+# Maximum five lines per second globally; no inventory or profile contents.
+diagnostics:
+  magic-cost:
+    enabled: false
+    player: ""
+
 # by Auxilor
 #
 
@@ -20,6 +27,13 @@ leaderboard:
 disabled-in-worlds:
   - world_1
   - world_2
+
+# Scale only the hunger cost of natural regeneration for players with custom health.
+# At 40 max health with a base of 20, regeneration causes half the exhaustion.
+natural-regeneration-hunger:
+  enabled: true
+  base-health: 20.0
+  minimum-multiplier: 0.15
 
 gui:
   rows: 6
