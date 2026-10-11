@@ -15,6 +15,7 @@ import com.willfp.eco.util.formatEco
 import com.willfp.eco.util.toNiceString
 import com.willfp.eco.util.toNumeral
 import com.willfp.ecoskills.skills.SkillsLeaderboard.getPosition
+import com.willfp.ecoskills.stats.statValueText
 import com.willfp.ecoskills.util.LevelInjectable
 import com.willfp.ecoskills.util.loadDescriptionPlaceholders
 import jdk.internal.joptsimple.util.RegexMatcher.regex
@@ -37,6 +38,10 @@ abstract class Levellable(
         .expireAfterWrite(Duration.ofMillis(plugin.configYml.getInt("gui.cache-ttl").toLong()))
         .build()
 
+    private val decimalDescCache = EcoCache.builder<Double, String>()
+        .expireAfterWrite(Duration.ofMillis(plugin.configYml.getInt("gui.cache-ttl").toLong()))
+        .build()
+
     private val unformattedDescription = config.getString("description")
 
     val name = config.getFormattedString("name")
@@ -44,12 +49,12 @@ abstract class Levellable(
     init {
         config.injectPlaceholders(
             PlayerStaticPlaceholder("level") {
-                getActualLevel(it).toString()
+                statValueText(getActualValue(it))
             }
         )
 
         PlayerPlaceholder(plugin, id) {
-            getActualLevel(it).toString()
+            statValueText(getActualValue(it))
         }.register()
 
         PlayerPlaceholder(plugin, "${id}_numeral") {
@@ -61,7 +66,7 @@ abstract class Levellable(
         }.register()
 
         PlayerPlaceholder(plugin, "${id}_description") {
-            getDescription(getActualLevel(it))
+            if (this is com.willfp.ecoskills.stats.Stat) getDescription(getActualValue(it)) else getDescription(getActualLevel(it))
         }.register()
 
         PlayerPlaceholder(plugin, "${id}_leaderboard_rank") { player ->
@@ -72,6 +77,7 @@ abstract class Levellable(
     }
 
     internal open fun getActualLevel(player: OfflinePlayer) = getSavedLevel(player)
+    internal open fun getActualValue(player: OfflinePlayer): Double = getActualLevel(player).toDouble()
 
     internal fun getSavedLevel(player: OfflinePlayer) = player.profile.read(key)
     internal fun setSavedLevel(player: OfflinePlayer, level: Int) = player.profile.write(key, level)
@@ -100,6 +106,26 @@ abstract class Levellable(
         return result
     }
 
+    fun addPlaceholdersInto(string: String, level: Double): String {
+        if (this !is com.willfp.ecoskills.stats.Stat && level >= Int.MIN_VALUE && level <= Int.MAX_VALUE && level == level.toInt().toDouble()) {
+            return addPlaceholdersInto(string, level.toInt())
+        }
+        var result = string
+            .replace("%ecoskills_${id}_numeral%", level.toInt().toNumeral())
+            .replace("%ecoskills_${id}_description%", getDescription(level))
+            .replace("%ecoskills_${id}%", statValueText(level))
+            .replace("%level%", statValueText(level))
+            .replace("%level_numeral%", level.toInt().toNumeral())
+            .replace("%previous_level%", statValueText(level - 1))
+            .replace("%previous_level_numeral%", (level - 1).toInt().toNumeral())
+        result = Regex("%level_(-?\\d+)(_numeral)?%").replace(result) { match ->
+            val offset = match.groupValues[1].toIntOrNull() ?: return@replace match.value
+            val value = level + offset
+            if (match.groupValues[2].isNotEmpty()) value.toInt().toNumeral() else statValueText(value)
+        }
+        return result
+    }
+
     fun getDescription(level: Int): String {
         descCache.get(level)?.let { return it }
 
@@ -117,6 +143,26 @@ abstract class Levellable(
 
         val result = desc.formatEco(context)
         descCache.put(level, result)
+        return result
+    }
+
+    fun getDescription(level: Double): String {
+        decimalDescCache.get(level)?.let { return it }
+
+        var desc = unformattedDescription
+
+        val context = placeholderContext(
+            injectable = LevelInjectable(level)
+        )
+
+        for (placeholder in loadDescriptionPlaceholders(config)) {
+            val id = placeholder.id
+            val value = evaluateExpression(placeholder.expr, context)
+            desc = desc.replace("%$id%", statValueText(value))
+        }
+
+        val result = desc.formatEco(context)
+        decimalDescCache.put(level, result)
         return result
     }
 }

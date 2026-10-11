@@ -6,7 +6,7 @@ import com.willfp.eco.core.gui.slot
 import com.willfp.eco.core.items.Items
 import com.willfp.eco.core.items.builder.modify
 import com.willfp.eco.util.lineWrap
-import com.willfp.ecoskills.api.getStatLevel
+import com.willfp.ecoskills.api.getStatValue
 import com.willfp.ecoskills.plugin
 import com.willfp.ecoskills.stats.Stat
 import org.bukkit.inventory.ItemStack
@@ -16,6 +16,10 @@ private val itemCache = EcoCache.builder<Int, ItemStack>()
     .expireAfterWrite(Duration.ofMillis(plugin.configYml.getInt("gui.cache-ttl").toLong()))
     .build()
 
+internal fun invalidateStatIcon(player: org.bukkit.entity.Player, stat: Stat) {
+    itemCache.invalidate(player.hashCode() xor stat.hashCode())
+}
+
 class StatIcon(
     stat: Stat,
     config: Config
@@ -24,7 +28,7 @@ class StatIcon(
 
     private val slot = slot { player, _ ->
         itemCache.get(player.hashCode() xor stat.hashCode()) {
-            val level = player.getStatLevel(stat)
+            val level = player.getStatValue(stat)
 
             baseIcon.clone().modify {
                 setDisplayName(
@@ -36,7 +40,7 @@ class StatIcon(
                 addLoreLines(
                     stat.addPlaceholdersInto(
                         plugin.configYml.getStrings("stats-gui.stat-icon.lore"),
-                        player
+                        player, level
                     ).lineWrap(plugin.configYml.getInt("stats-gui.stat-icon.line-wrap"))
                 )
             }

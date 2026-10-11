@@ -4,13 +4,13 @@ import com.willfp.eco.core.placeholder.InjectablePlaceholder
 import com.willfp.eco.core.placeholder.PlaceholderInjectable
 import com.willfp.eco.core.placeholder.StaticPlaceholder
 
-class LevelInjectable(
-    level: Int
-) : PlaceholderInjectable {
+class LevelInjectable private constructor(level: String) : PlaceholderInjectable {
+    constructor(level: Int) : this(level.toString())
+    constructor(level: Double) : this(com.willfp.ecoskills.stats.statValueText(level))
     private val placeholders = listOf(
         StaticPlaceholder(
             "level"
-        ) { level.toString() }
+        ) { level }
     )
 
     override fun getPlaceholderInjections(): List<InjectablePlaceholder> {

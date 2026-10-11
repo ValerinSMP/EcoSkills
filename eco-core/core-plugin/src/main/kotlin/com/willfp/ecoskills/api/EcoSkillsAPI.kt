@@ -92,6 +92,14 @@ fun OfflinePlayer.giveBaseStatLevel(stat: Stat, amount: Int) {
     this.stats[stat] += amount
 }
 
+/** Effective stat including transient modifiers, without legacy Int truncation. */
+fun OfflinePlayer.getStatValue(stat: Stat): Double =
+    if (this is Player) this.statModifiers.getStatValue(stat) else this.getBaseStatLevel(stat).toDouble()
+
+/** Effective value minus the persisted base; modifiers are session-only. */
+fun OfflinePlayer.getBonusStatValue(stat: Stat): Double =
+    if (this is Player) this.statModifiers.getBonusStatValue(stat) else 0.0
+
 fun OfflinePlayer.getStatLevel(stat: Stat): Int =
     if (this is Player) this.statModifiers.getModifiedValue(stat) else this.getBaseStatLevel(stat)
 

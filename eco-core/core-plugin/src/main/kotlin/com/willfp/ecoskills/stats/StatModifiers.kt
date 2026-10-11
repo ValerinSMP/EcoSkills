@@ -21,14 +21,19 @@ internal val Player.statModifiers: StatModifiers
 class StatModifiers(
     private val player: Player
 ) {
+    internal var onChanged: (Set<Stat>) -> Unit = { invalidateModifiedStats(player, it) }
+
     fun add(modifier: StatModifier) {
-        trackedStatModifiers[player.uniqueId][modifier.uuid] = modifier
+        val previous = trackedStatModifiers[player.uniqueId].put(modifier.uuid, modifier)
+        if (previous != modifier) onChanged(setOfNotNull(previous?.stat, modifier.stat))
     }
 
     operator fun plusAssign(modifier: StatModifier) = add(modifier)
 
     fun remove(uuid: UUID): StatModifier? {
-        return trackedStatModifiers[player.uniqueId].remove(uuid)
+        val removed = trackedStatModifiers[player.uniqueId].remove(uuid) ?: return null
+        onChanged(setOf(removed.stat))
+        return removed
     }
 
     operator fun minusAssign(uuid: UUID) {
@@ -44,7 +49,7 @@ class StatModifiers(
     }
 
     fun getModifiers(stat: Stat): List<StatModifier> {
-        return getModifiers().filter { it.stat == stat }
+        return getModifiers().filter { it.stat.id == stat.id }
     }
 
     fun getModifier(uuid: UUID): StatModifier? {
@@ -61,21 +66,13 @@ class StatModifiers(
     /**
      * Get the modified value of a stat.
      */
-    fun getModifiedValue(stat: Stat): Int {
-        val modifiers = getModifiers(stat)
+    fun getModifiedValue(stat: Stat): Int = getStatValue(stat).toInt()
 
-        var level = player.getBaseStatLevel(stat).toDouble()
+    fun getStatValue(stat: Stat): Double =
+        modifiedStatValue(player.getBaseStatLevel(stat).toDouble(), getModifiers(stat))
 
-        modifiers.filter { it.operation == ModifierOperation.ADD }.forEach {
-            level += it.modifier
-        }
+    fun getBonusStatValue(stat: Stat): Double = getStatValue(stat) - player.getBaseStatLevel(stat)
 
-        modifiers.filter { it.operation == ModifierOperation.MULTIPLY }.forEach {
-            level *= it.modifier
-        }
-
-        return level.toInt()
-    }
 }
 
 // Little fixer-upper

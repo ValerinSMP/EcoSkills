@@ -8,6 +8,8 @@ import com.willfp.ecoskills.LevellableWithHolder
 import com.willfp.ecoskills.api.getBaseStatLevel
 import com.willfp.ecoskills.api.getBonusStatLevel
 import com.willfp.ecoskills.api.getStatLevel
+import com.willfp.ecoskills.api.getStatValue
+import com.willfp.ecoskills.api.getBonusStatValue
 import com.willfp.ecoskills.gui.components.StatIcon
 import com.willfp.ecoskills.plugin
 import com.willfp.ecoskills.util.LevelMap
@@ -36,16 +38,24 @@ class Stat(
         }.formatEco(player)
     }
 
+    fun addPlaceholdersInto(strings: List<String>, player: Player, level: Double): List<String> =
+        strings.map { s ->
+            s.replace("%description%", getDescription(level)).replace("%stat%", name)
+                .let { addPlaceholdersInto(it, level) }
+        }.formatEco(player)
+
+    override fun getActualValue(player: OfflinePlayer): Double = player.getStatValue(this)
+
     init {
         PlayerPlaceholder(plugin, "${id}_base") {
             it.getBaseStatLevel(this).toNiceString()
         }.register()
 
         PlayerPlaceholder(plugin, "${id}_bonus") {
-            val bonus = it.getBonusStatLevel(this)
+            val bonus = it.getBonusStatValue(this)
             when {
-                bonus > 0 -> "+${bonus}"
-                bonus < 0 -> "$bonus"
+                bonus > 0 -> "+${statValueText(bonus)}"
+                bonus < 0 -> statValueText(bonus)
                 else -> ""
             }
         }.register()

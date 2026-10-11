@@ -109,14 +109,7 @@ class EcoSkillsPlugin : LibreforgePlugin() {
     }
 
     override fun handleEnable() {
-        registerSpecificHolderProvider<Player> { player ->
-            if (player.isInDisabledWorld) emptyList() else
-                collectProvidedLevelHolders(
-                    Effects.values() union Stats.values(),
-                    { it.getLevelHolder(it.getActualLevel(player)) },
-                    { SimpleProvidedHolder(it) }
-                )
-        }
+        com.willfp.libreforge.registerHolderProvider(com.willfp.ecoskills.stats.StatHolderProvider)
 
         if (this.configYml.getBool("leaderboard.enabled")) {
             EcoSkillsTopPlaceholder.register()
@@ -126,6 +119,10 @@ class EcoSkillsPlugin : LibreforgePlugin() {
     }
 
     override fun handleReload() {
+        // One provider-local refresh on an explicit reload, not a global/polling invalidation.
+        org.bukkit.Bukkit.getOnlinePlayers().forEach {
+            com.willfp.ecoskills.stats.invalidateModifiedStats(it, Stats.values().toSet())
+        }
         if (this.configYml.getBool("persistent-action-bar.enabled")) {
             ActionBarHandler.startTicking()
         }

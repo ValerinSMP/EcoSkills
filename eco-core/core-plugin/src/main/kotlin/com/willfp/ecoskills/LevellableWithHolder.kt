@@ -14,6 +14,11 @@ abstract class LevellableWithHolder(
 ) : Levellable(id, config) {
     private val levels = mutableMapOf<Int, LevelHolder>()
 
+    // Bounded cache: fractional pet values must not create an unbounded lifetime map.
+    private val fractionalLevels = object : LinkedHashMap<Double, Holder>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Double, Holder>?) = size > 512
+    }
+
     private val effects: EffectList
     private val conditions: ConditionList
 
@@ -31,6 +36,20 @@ abstract class LevellableWithHolder(
 
     fun getLevelHolder(level: Int): Holder? = if (level == 0) null else levels.getOrPut(level) {
         LevelHolder(level, conditions, effects)
+    }
+
+    fun getLevelHolder(level: Double): Holder? {
+        if (!level.isFinite() || level == 0.0) return null
+        if (level >= Int.MIN_VALUE && level <= Int.MAX_VALUE && level == level.toInt().toDouble()) {
+            return getLevelHolder(level.toInt())
+        }
+        return fractionalLevels.getOrPut(level) {
+            object : Holder {
+                override val id = plugin.createNamespacedKey("${this@LevellableWithHolder.id}_${com.willfp.ecoskills.stats.fractionalStatKey(level)}")
+                override val conditions = this@LevellableWithHolder.conditions
+                override val effects = this@LevellableWithHolder.effects
+            }
+        }
     }
 
     private inner class LevelHolder(

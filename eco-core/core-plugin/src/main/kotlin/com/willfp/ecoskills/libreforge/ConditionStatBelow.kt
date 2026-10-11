@@ -1,7 +1,7 @@
 package com.willfp.ecoskills.libreforge
 
 import com.willfp.eco.core.config.interfaces.Config
-import com.willfp.ecoskills.api.getStatLevel
+import com.willfp.ecoskills.api.getStatValue
 import com.willfp.ecoskills.stats.Stats
 import com.willfp.libreforge.ArgType
 import com.willfp.libreforge.Dispatcher
@@ -42,6 +42,6 @@ object ConditionStatBelow : Condition<NoCompileData>("stat_below") {
 
         val type = Stats.getByID(config.getString("stat").lowercase()) ?: return false
 
-        return player.getStatLevel(type) < config.getIntFromExpression("level", player)
+        return player.getStatValue(type) < config.getDoubleFromExpression("level", player)
     }
 }
