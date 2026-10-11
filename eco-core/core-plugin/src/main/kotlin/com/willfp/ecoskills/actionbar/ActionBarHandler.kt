@@ -9,6 +9,7 @@ import com.willfp.eco.core.placeholder.PlayerStaticPlaceholder
 import com.willfp.eco.core.placeholder.context.placeholderContext
 import com.willfp.eco.util.containsIgnoreCase
 import com.willfp.eco.util.namespacedKeyOf
+import com.willfp.ecoskills.api.getStatLevel
 import com.willfp.ecoskills.plugin
 import org.bukkit.Bukkit
 import org.bukkit.GameMode
@@ -127,6 +128,7 @@ object ActionBarHandler {
 
     internal fun startTicking() {
         tickingTask?.cancel()
+        PlayerHealthInjectable.refreshStatInjections()
         val interval = plugin.configYml.getInt("persistent-action-bar.interval", 10).coerceAtLeast(1).toLong()
         tickingTask = plugin.scheduler.runTimer(interval, interval) {
             for (player in Bukkit.getOnlinePlayers()) {
@@ -136,7 +138,7 @@ object ActionBarHandler {
     }
 
     object PlayerHealthInjectable : PlaceholderInjectable {
-        private val injections = listOf(
+        private val healthInjections = listOf(
             PlayerStaticPlaceholder(
                 "health"
             ) { it.health.toInt().toString() },
@@ -144,6 +146,16 @@ object ActionBarHandler {
                 "max_health"
             ) { it.getAttribute(Attribute.MAX_HEALTH)?.value?.toInt()?.toString() ?: "20" },
         )
+
+        private var injections: List<InjectablePlaceholder> = healthInjections
+
+        internal fun refreshStatInjections(stats: Collection<com.willfp.ecoskills.stats.Stat> = com.willfp.ecoskills.stats.Stats.values()) {
+            injections = healthInjections + stats.map { stat ->
+                PlayerStaticPlaceholder("ecoskills_${stat.id}") { player ->
+                    player.getStatLevel(stat).toString()
+                }
+            }
+        }
 
         override fun getPlaceholderInjections(): List<InjectablePlaceholder> {
             return injections

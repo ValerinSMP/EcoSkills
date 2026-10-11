@@ -54,8 +54,8 @@ class Stat(
         PlayerPlaceholder(plugin, "${id}_bonus") {
             val bonus = it.getBonusStatValue(this)
             when {
-                bonus > 0 -> "+${statValueText(bonus)}"
-                bonus < 0 -> statValueText(bonus)
+                bonus > 0 -> "+${statDisplayText(bonus)}"
+                bonus < 0 -> statDisplayText(bonus)
                 else -> ""
             }
         }.register()

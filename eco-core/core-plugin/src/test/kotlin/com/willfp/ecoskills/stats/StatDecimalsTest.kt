@@ -140,4 +140,43 @@ class StatDecimalsTest {
         assertEquals(fractionalStatKey(100.02),fractionalStatKey(100.02))
         assertFalse(fractionalStatKey(0.02).contains('.'))
     }
+    @Test fun visibleNumbersAreBoundedWithoutChangingExpressionPrecision() {
+        assertEquals("40.02", statDisplayText(40.019200000000005))
+        assertEquals("126.55", statDisplayText(126.54720000000002))
+        assertEquals("57.37", statDisplayText(57.368064000000004))
+        assertEquals("0.02", statDisplayText(0.01999999999999602))
+        assertEquals("100", statDisplayText(100.0))
+        assertEquals("0", statDisplayText(-0.000001))
+        assertEquals("-1.24", statDisplayText(-1.235))
+        assertEquals("0.00000002", statValueText(0.00000002))
+        assertEquals("40.019200000000005", statValueText(40.019200000000005))
+    }
+
+    @Test fun nativeExpressionInjectionsKeepCrossStatPrecision() {
+        val config = Mockito.mock(com.willfp.eco.core.config.interfaces.Config::class.java)
+        Mockito.`when`(config.toMap()).thenReturn(mutableMapOf<String, Any?>(
+            "effects" to listOf(mapOf("args" to mapOf("multiplier" to "1.5 + (%ecoskills_crit_damage% * 0.005)")))
+        ))
+        var injected = emptyList<com.willfp.eco.core.placeholder.InjectablePlaceholder>()
+        Mockito.doAnswer { call ->
+            injected = call.getArgument<Iterable<com.willfp.eco.core.placeholder.InjectablePlaceholder>>(0).toList()
+            null
+        }.`when`(config).addInjectablePlaceholder(Mockito.anyIterable())
+        modifiers.add(modifier(0.019200000000005))
+        config.injectPreciseStatExpressions { requested -> if (requested == "crit_damage") stat else null }
+        val raw = (injected.single() as com.willfp.eco.core.placeholder.PlayerStaticPlaceholder).getValue(player)
+        assertEquals("100.01920000000001", raw)
+        assertEquals("100.02", statDisplayText(raw.toDouble()))
+        assertEquals(100.01920000000001, player.getStatValue(stat))
+    }
+
+    @Test fun actionbarShowsLegacyIntegersWithoutChangingStatsOrEffects() {
+        modifiers.add(modifier(0.019200000000005))
+        val actionbar = com.willfp.ecoskills.actionbar.ActionBarHandler.PlayerHealthInjectable
+        actionbar.refreshStatInjections(listOf(stat))
+        val injection = actionbar.placeholderInjections.drop(2).single() as com.willfp.eco.core.placeholder.PlayerStaticPlaceholder
+        assertEquals("100", injection.getValue(player))
+        assertEquals(100.01920000000001, player.getStatValue(stat))
+        assertEquals("100.02", statDisplayText(player.getStatValue(stat)))
+    }
 }

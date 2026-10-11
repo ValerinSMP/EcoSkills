@@ -12,6 +12,7 @@ import com.willfp.eco.util.toNumeral
 import com.willfp.ecoskills.api.event.PlayerRegenMagicEvent
 import com.willfp.ecoskills.libreforge.EffectArgumentMagicCost
 import com.willfp.ecoskills.plugin
+import com.willfp.ecoskills.stats.injectPreciseStatExpressions
 import com.willfp.libreforge.effects.arguments.EffectArguments
 import org.bukkit.Bukkit
 import org.bukkit.entity.Player
@@ -19,7 +20,7 @@ import kotlin.math.ceil
 
 class MagicType(
     override val id: String,
-    config: Config
+    private val config: Config
 ) : KRegistrable {
     private val regenRateExpr = config.getString("regen-rate")
 
@@ -32,6 +33,7 @@ class MagicType(
     val priceFactory = PriceFactoryMagic(this)
 
     init {
+        config.injectPreciseStatExpressions()
         PlayerlessPlaceholder(plugin, "${id}_name") {
             config.getFormattedString("name")
         }.register()
@@ -56,7 +58,8 @@ class MagicType(
 
     fun getLimit(player: Player) = evaluateExpression(
         limitExpr, placeholderContext(
-            player = player
+            player = player,
+            injectable = config
         )
     ).toInt()
 
@@ -64,7 +67,8 @@ class MagicType(
         val baseToRegen = ceil(
             evaluateExpression(
                 regenRateExpr, placeholderContext(
-                    player = player
+                    player = player,
+            injectable = config
                 )
             )
         ).toInt()

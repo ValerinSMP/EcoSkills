@@ -16,6 +16,8 @@ import com.willfp.eco.util.toNiceString
 import com.willfp.eco.util.toNumeral
 import com.willfp.ecoskills.skills.SkillsLeaderboard.getPosition
 import com.willfp.ecoskills.stats.statValueText
+import com.willfp.ecoskills.stats.statDisplayText
+import com.willfp.ecoskills.stats.injectPreciseStatExpressions
 import com.willfp.ecoskills.util.LevelInjectable
 import com.willfp.ecoskills.util.loadDescriptionPlaceholders
 import jdk.internal.joptsimple.util.RegexMatcher.regex
@@ -47,6 +49,7 @@ abstract class Levellable(
     val name = config.getFormattedString("name")
 
     init {
+        config.injectPreciseStatExpressions()
         config.injectPlaceholders(
             PlayerStaticPlaceholder("level") {
                 statValueText(getActualValue(it))
@@ -54,7 +57,7 @@ abstract class Levellable(
         )
 
         PlayerPlaceholder(plugin, id) {
-            statValueText(getActualValue(it))
+            statDisplayText(getActualValue(it))
         }.register()
 
         PlayerPlaceholder(plugin, "${id}_numeral") {
@@ -113,15 +116,15 @@ abstract class Levellable(
         var result = string
             .replace("%ecoskills_${id}_numeral%", level.toInt().toNumeral())
             .replace("%ecoskills_${id}_description%", getDescription(level))
-            .replace("%ecoskills_${id}%", statValueText(level))
-            .replace("%level%", statValueText(level))
+            .replace("%ecoskills_${id}%", statDisplayText(level))
+            .replace("%level%", statDisplayText(level))
             .replace("%level_numeral%", level.toInt().toNumeral())
-            .replace("%previous_level%", statValueText(level - 1))
+            .replace("%previous_level%", statDisplayText(level - 1))
             .replace("%previous_level_numeral%", (level - 1).toInt().toNumeral())
         result = Regex("%level_(-?\\d+)(_numeral)?%").replace(result) { match ->
             val offset = match.groupValues[1].toIntOrNull() ?: return@replace match.value
             val value = level + offset
-            if (match.groupValues[2].isNotEmpty()) value.toInt().toNumeral() else statValueText(value)
+            if (match.groupValues[2].isNotEmpty()) value.toInt().toNumeral() else statDisplayText(value)
         }
         return result
     }
@@ -158,10 +161,10 @@ abstract class Levellable(
         for (placeholder in loadDescriptionPlaceholders(config)) {
             val id = placeholder.id
             val value = evaluateExpression(placeholder.expr, context)
-            desc = desc.replace("%$id%", statValueText(value))
+            desc = desc.replace("%$id%", statDisplayText(value))
         }
 
-        val result = desc.formatEco(context)
+        val result = desc.replace("%level%", statDisplayText(level)).formatEco(context)
         decimalDescCache.put(level, result)
         return result
     }
