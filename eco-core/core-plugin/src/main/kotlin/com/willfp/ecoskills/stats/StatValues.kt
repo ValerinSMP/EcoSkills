@@ -47,7 +47,8 @@ internal fun Config.injectPreciseStatExpressions(resolveStat: (String) -> Stat? 
         PlayerStaticPlaceholder("ecoskills_$id") { player ->
             val stat = resolveStat(id)
             if (stat != null) statValueText(player.getStatValue(stat))
-            else "%ecoskills_$id%".formatEco(player)
+            // Non-stat placeholders (e.g. mana_limit) must use native resolution, not color-only formatting.
+            else "%ecoskills_$id%".formatEco(player, formatPlaceholders = true)
         }
     })
 }

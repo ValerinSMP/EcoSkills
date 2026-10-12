@@ -179,4 +179,29 @@ class StatDecimalsTest {
         assertEquals(100.01920000000001, player.getStatValue(stat))
         assertEquals("100.02", statDisplayText(player.getStatValue(stat)))
     }
+    @Test fun nonStatMagicLimitUsesNativePlaceholderResolution() {
+        val config = Mockito.mock(com.willfp.eco.core.config.interfaces.Config::class.java)
+        Mockito.`when`(config.toMap()).thenReturn(mutableMapOf<String, Any?>(
+            "regen-rate" to "0.02 * %ecoskills_mana_limit%"
+        ))
+        var injected = emptyList<com.willfp.eco.core.placeholder.InjectablePlaceholder>()
+        Mockito.doAnswer { call ->
+            injected = call.getArgument<Iterable<com.willfp.eco.core.placeholder.InjectablePlaceholder>>(0).toList()
+            null
+        }.`when`(config).addInjectablePlaceholder(Mockito.anyIterable())
+        config.injectPreciseStatExpressions { null }
+        Mockito.mockStatic(com.willfp.eco.util.StringUtils::class.java).use { formatting ->
+            formatting.`when`<String> {
+                com.willfp.eco.util.StringUtils.format("%ecoskills_mana_limit%", player,
+                    com.willfp.eco.util.StringUtils.FormatOption.WITH_PLACEHOLDERS)
+            }.thenReturn("326")
+            val raw = (injected.single() as com.willfp.eco.core.placeholder.PlayerStaticPlaceholder).getValue(player)
+            assertEquals("326", raw)
+            assertEquals(7, kotlin.math.ceil(0.02 * raw.toDouble()).toInt())
+            formatting.verify {
+                com.willfp.eco.util.StringUtils.format("%ecoskills_mana_limit%", player,
+                    com.willfp.eco.util.StringUtils.FormatOption.WITH_PLACEHOLDERS)
+            }
+        }
+    }
 }

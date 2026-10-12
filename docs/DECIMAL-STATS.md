@@ -33,7 +33,7 @@ Loader, NMS and dependency versions are retained. API JAR contains EcoSkills cla
 without bundled dependencies; use compileOnly. No vPets edits or XP/progression changes.
 
 Runtime: EcoSkills-2026.27-all.jar
-SHA256: 75bd85b9eb0cf07848036c020a66f945c83fd3443d56d014792446baa0b726c5
+SHA256: 8f7a682eef754755f6854e5f16165eb3afcccc9504a31faef33adbd5f9eaad14
 API: EcoSkills-2026.27-decimal-api.jar
 SHA256: 324a62336c47c864d3c9ff08a8100417cd30d7bd3ae1cfc87f8fe6b2db40e233
 
@@ -51,3 +51,36 @@ Pending: adapt vPets against the supplied API, equip/remove/re-equip all 12 pets
 check decimals in native effects/placeholders/menu, and validate real reconnect/reload
 without residual attributes or healing. Automated session/registry replacement tests passed;
 these do not replace gameplay acceptance.
+
+
+## Mana placeholder regression correction
+
+The decimal expression injector also matches non-stat placeholders such as `mana_limit`.
+Its fallback previously used `formatEco(player)` which defaults to color-only formatting;
+the individual expression parser accepts that injection before native placeholder lookup,
+and unresolved numeric text is converted to zero. Explicit WITH_PLACEHOLDERS resolution
+restores the native fallback while real statistics still inject full-precision decimal text.
+The magic category loads before Stats, so filtering all unknown identifiers at construction
+would also discard valid stat injections. No loaders, task rates, balance or APIs change.
+
+39 JVM tests pass including the new non-stat mana-limit resolution regression, exact decimal
+injections, legacy ABI, modifier removal, native health without healing and final XP receipt
+regressions. The new test needs Caffeine only on the test runtime because static StringUtils
+initializes an EcoCache. Runtime dependency contents are unchanged.
+
+Custom and Sync were restarted by the owner before this task, activating the display runtime.
+A backed-up temporary formula `0.02 * floor(100 + %ecoskills_wisdom%)` was installed and one
+native EcoSkills reload was executed on each server as explicitly authorized. Math wrappers
+were removed. Twelve cases were checked with the exact installed eco expression parser.
+Sampled players are at their mana maximum; regeneration after spending remains a gameplay
+verification, not proved by a full-mana reading.
+
+The code fix is installed on Test, Custom and Sync with verified HDD backups and hashes.
+Only `stats/StatValuesKt.class` changes relative to the display runtime; every API/XP class
+and all other archive entries are byte-identical. Public descriptors remain unchanged.
+After installation the original mana formula was restored on Custom/Sync disk WITHOUT
+another reload. Running processes retain the temporary formula and older loaded classes;
+the fixed class and original formula activate together at the owner's next restart.
+No restart was executed and Test was not reloaded. API compile artifact is unchanged.
+Evidence: /home/mtyn/staging/survival-custom/mana-activation-20261011/
+Backup: /mnt/storage/backups/ai/survival-custom/mana-code-fix-20261012T001109Z
