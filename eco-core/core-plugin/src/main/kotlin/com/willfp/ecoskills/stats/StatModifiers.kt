@@ -15,6 +15,12 @@ import java.util.UUID
 // Player UUID -> Stat Modifier UUID -> Stat Modifier
 private val trackedStatModifiers = nestedMap<UUID, UUID, StatModifier>()
 
+/** No default bucket and no profile reads. Must run on main. */
+fun peekStatModifiers(uuid: UUID): List<StatModifier> =
+    trackedStatModifiers.getIfPresent(uuid)?.values?.take(513) ?: emptyList()
+
+fun peekStatModifierCount(uuid: UUID): Int = trackedStatModifiers.getIfPresent(uuid)?.size ?: 0
+
 internal val Player.statModifiers: StatModifiers
     get() = StatModifiers(this)
 

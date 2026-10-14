@@ -82,6 +82,9 @@ abstract class Levellable(
     internal open fun getActualLevel(player: OfflinePlayer) = getSavedLevel(player)
     internal open fun getActualValue(player: OfflinePlayer): Double = getActualLevel(player).toDouble()
 
+    /** Existing key; observation must not construct/register another one. */
+    fun getObservationKey() = key
+
     internal fun getSavedLevel(player: OfflinePlayer) = player.profile.read(key)
     internal fun setSavedLevel(player: OfflinePlayer, level: Int) = player.profile.write(key, level)
 

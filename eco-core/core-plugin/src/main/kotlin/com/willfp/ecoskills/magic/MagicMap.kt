@@ -7,6 +7,8 @@ import java.util.UUID
 
 private val map = nestedMap<UUID, MagicType, Int>()
 
+fun peekObservedMagic(uuid: UUID, type: MagicType): Int? = map.getIfPresent(uuid)?.get(type)
+
 class MagicMap(
     private val player: Player
 ) {
@@ -18,5 +20,6 @@ class MagicMap(
         val actualAmount = amount.coerceIn(0..type.getLimit(player))
 
         map[player.uniqueId][type] = actualAmount
+        com.willfp.ecoskills.api.observation.ObservationSessions.markMagicWrite(player, type.id)
     }
 }

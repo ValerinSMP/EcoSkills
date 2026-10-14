@@ -1,0 +1,11 @@
+ADD com/willfp/ecoskills/Levellable.class getObservationKey
+ADD com/willfp/ecoskills/skills/Skill.class getObservationXPKey,getObservationRequirements,getObservationFormula
+ADD com/willfp/ecoskills/magic/MagicType.class getObservationLimitExpression,getObservationRegenExpression
+ADD com/willfp/ecoskills/stats/StatModifiersKt.class peekStatModifiers,peekStatModifierCount
+ADD com/willfp/ecoskills/magic/MagicMapKt.class peekObservedMagic
+ADD com/willfp/ecoskills/actionbar/ActionBarHandlerKt.class getActionBarObservationKey
+ADD com/willfp/ecoskills/skills/display/GainXPDisplayKt.class getGainSoundObservationKey
+ADD com/willfp/ecoskills/api/EcoSkillsAPI.class getCachedObservation,getCachedSnapshot,getStoredObservationAsync,getStoredObservationsAsync,getObservationDefinitions,getObservationCapabilities
+REPLACE com/willfp/ecoskills/magic/MagicMap.class set
+REPLACE com/willfp/ecoskills/EcoSkillsPlugin.class <init>
+PREFIX com/willfp/ecoskills/api/observation/

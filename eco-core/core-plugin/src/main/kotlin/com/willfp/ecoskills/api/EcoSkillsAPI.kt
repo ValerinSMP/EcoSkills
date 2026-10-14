@@ -20,6 +20,23 @@ import org.bukkit.OfflinePlayer
 import org.bukkit.entity.Player
 import java.util.UUID
 
+/** Read-only observation facade. Cached methods require the main thread. */
+fun getCachedObservation(uuid: UUID) = com.willfp.ecoskills.api.observation.ObservationService.cached(uuid)
+fun getCachedObservation(uuid: UUID, request: com.willfp.ecoskills.api.observation.ObservationRequest) =
+    com.willfp.ecoskills.api.observation.ObservationService.cached(uuid, request)
+fun getCachedSnapshot(player: Player): Map<String, Any?> {
+    check(org.bukkit.Bukkit.isPrimaryThread()) { "Cached observation requires the main thread" }
+    return getCachedSnapshot(player.uniqueId)
+}
+fun getCachedSnapshot(uuid: UUID): Map<String, Any?> =
+    com.willfp.ecoskills.api.observation.ObservationService.legacy(uuid)
+fun getStoredObservationAsync(uuid: UUID): java.util.concurrent.CompletionStage<com.willfp.ecoskills.api.observation.PlayerObservation> = com.willfp.ecoskills.api.observation.ObservationService.stored(uuid, com.willfp.ecoskills.api.observation.ObservationRequest.all())
+fun getStoredObservationAsync(uuid: UUID, request: com.willfp.ecoskills.api.observation.ObservationRequest): java.util.concurrent.CompletionStage<com.willfp.ecoskills.api.observation.PlayerObservation> = com.willfp.ecoskills.api.observation.ObservationService.stored(uuid, request)
+fun getStoredObservationsAsync(uuids: Set<UUID>): java.util.concurrent.CompletionStage<Map<UUID, com.willfp.ecoskills.api.observation.PlayerObservation>> = com.willfp.ecoskills.api.observation.ObservationService.storedBatch(uuids, com.willfp.ecoskills.api.observation.ObservationRequest.all())
+fun getStoredObservationsAsync(uuids: Set<UUID>, request: com.willfp.ecoskills.api.observation.ObservationRequest): java.util.concurrent.CompletionStage<Map<UUID, com.willfp.ecoskills.api.observation.PlayerObservation>> = com.willfp.ecoskills.api.observation.ObservationService.storedBatch(uuids, request)
+fun getObservationDefinitions() = com.willfp.ecoskills.api.observation.ObservationService.definitions()
+fun getObservationCapabilities() = com.willfp.ecoskills.api.observation.ObservationService.capabilities()
+
 /*
 
 Skills

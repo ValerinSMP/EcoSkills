@@ -51,6 +51,9 @@ class MagicType(
         }.register()
     }
 
+    fun getObservationLimitExpression(): String = limitExpr
+    fun getObservationRegenExpression(): String = regenRateExpr
+
     override fun onRegister() {
         Prices.registerPriceFactory(priceFactory)
         EffectArguments.register(EffectArgumentMagicCost(this))

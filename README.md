@@ -36,3 +36,7 @@
     </a>
   <br>
 </h1>
+
+## Valerin read-only observation API
+
+See [OBSERVATION-API.md](docs/OBSERVATION-API.md) for UUID cache/storage contracts, supported backends, thread requirements and controlled runtime delivery.

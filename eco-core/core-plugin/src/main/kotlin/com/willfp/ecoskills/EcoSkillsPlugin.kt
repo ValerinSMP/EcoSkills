@@ -66,6 +66,7 @@ internal lateinit var plugin: EcoSkillsPlugin
 class EcoSkillsPlugin : LibreforgePlugin() {
     init {
         plugin = this
+        com.willfp.ecoskills.api.observation.ObservationService.install(this)
     }
 
     override fun loadConfigCategories(): List<ConfigCategory> {

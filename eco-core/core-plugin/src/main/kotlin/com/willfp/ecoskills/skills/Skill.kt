@@ -276,6 +276,10 @@ class Skill(
         }
     }
 
+    fun getObservationXPKey() = xpKey
+    fun getObservationRequirements(): List<Double>? = requirements?.toList()
+    fun getObservationFormula(): String? = xpFormula
+
     internal fun getSavedXP(player: OfflinePlayer): Double = player.profile.read(xpKey)
     internal fun setSavedXP(player: OfflinePlayer, xp: Double) = player.profile.write(xpKey, xp)
 

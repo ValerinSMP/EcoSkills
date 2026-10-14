@@ -1,0 +1,9 @@
+ADD com/willfp/eco/core/Eco.class getProfileObservationAccess
+ADD com/willfp/eco/core/data/Profile.class peekCachedValues
+ADD com/willfp/eco/core/map/DefaultMap.class getIfPresent
+ADD com/willfp/eco/internal/spigot/EcoImpl.class getProfileObservationAccess
+ADD com/willfp/eco/internal/spigot/data/profiles/ProfileHandler.class peekPlayerProfile
+ADD com/willfp/eco/internal/spigot/data/profiles/impl/EcoProfile.class peekCachedValues
+PREFIX com/willfp/eco/core/data/observation/
+PREFIX com/willfp/eco/internal/spigot/data/observation/
+ADD com/willfp/eco/internal/spigot/data/handlers/impl/MySQLPersistentDataHandler.class getObservationReader

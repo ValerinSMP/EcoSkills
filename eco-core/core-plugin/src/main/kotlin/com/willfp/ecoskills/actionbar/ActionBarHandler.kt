@@ -35,6 +35,8 @@ private val actionBarEnabledKey = PersistentDataKey(
     true
 )
 
+fun getActionBarObservationKey() = actionBarEnabledKey
+
 fun Player.togglePersistentActionBar() {
     this.profile.write(actionBarEnabledKey, !this.profile.read(actionBarEnabledKey))
 }

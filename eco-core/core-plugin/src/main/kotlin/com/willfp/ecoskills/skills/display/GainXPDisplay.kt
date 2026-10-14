@@ -35,6 +35,8 @@ private val xpGainSoundEnabledKey = PersistentDataKey(
     true
 )
 
+fun getGainSoundObservationKey() = xpGainSoundEnabledKey
+
 fun Player.toggleXPGainSound() {
     this.profile.write(xpGainSoundEnabledKey, !this.profile.read(xpGainSoundEnabledKey))
 }
