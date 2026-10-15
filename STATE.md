@@ -1,3 +1,10 @@
+# Núcleo durable de mesa — 2026-10-15, sin conexión runtime
+
+- Implementados store JDBC transaccional de recibo/progreso nativo/cap/outbox, adapter INT/DOUBLE y contrato público de captura/consumo para vPets. Lease/revisión y comparación previenen escrituras antiguas en la primitiva; pendiente conectar cada writer nativo de eco antes de habilitar. Fuente/cambios ajenos intactos.
+- Compilado en personal limitado/JDK25/release21. 82tests pasaron,16nuevos H2/contrato; no son MySQL real, dos Minecraft ni implementación vPets. Ver docs/ENCHANTING-DURABLE-STATE.md para artefactos/hashes y límites.
+- FINAL_XP reenvía mismo awardId/evidencia/captura; LEVEL_EFFECT incierto pasaREVIEW para no duplicar callbacks externos. Recompensas nativas modeladas en la transacción de claves. Handoff vPets docs/VPETS-DURABLE-XP-HANDOFF.md; sin mensajes entre chats ni edición del consumidor.
+- No proveedor público de concesión habilitado, no instalación/SQL real/lifecycle. Pendientes escritor/fences/cache/handler inicializado, sesiones reales, consumidor/confirmación genuina/XP final y level_missing. No presentar el núcleo aislado como protección del runtime ni tarea completa.
+
 # Incremento preliminar de XP de mesa — 2026-10-15
 
 - Añadidos tipos públicos puros de evidencia/hash/identidad estable, fórmula3,5×L^1,5 y diagnóstico cache-only con motivo. Ninguna mutación de XP, fachada, fuente ajena, vEnchanting o vPets modificada.
