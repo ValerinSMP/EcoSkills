@@ -1,3 +1,10 @@
+# Incremento preliminar de XP de mesa — 2026-10-15
+
+- Añadidos tipos públicos puros de evidencia/hash/identidad estable, fórmula3,5×L^1,5 y diagnóstico cache-only con motivo. Ninguna mutación de XP, fachada, fuente ajena, vEnchanting o vPets modificada.
+- Compilado personal/ejecutor limitado/JDK25/release21 con Maven observation-20261013. 66tests pasaron,10nuevos. Contrato preliminar compileOnly y hash en docs/ENCHANTING-PURCHASE-XP.md; no es proveedor de concesión.
+- Pendientes: resolver semántica de notificación tras crash con propietario, proveedor durable/atomicidad/progreso/cap/fences/outbox e integración real. No afirmar idempotencia durable ni corrección runtime de level_missing. Sin instalación, SQL o lifecycle; Custom/Sync intactos.
+- Estado anterior y cambios ajenos a continuación preservados; commit solo de esta sección y archivos nuevos propios.
+
 # Estado actual 2026-10-13 — API de observación EcoSkills
 
 - Fuente canónica personal; eco/EcoSkills modificados sin normalizar upstream. Cambios previos ajenos preservados y excluidos del commit.
