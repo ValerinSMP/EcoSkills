@@ -1,6 +1,8 @@
 package com.willfp.ecoskills.enchanting.persistence;
 
 import javax.sql.DataSource;
+import com.willfp.ecoskills.api.enchanting.EnchantingXPProvider;
+import com.willfp.ecoskills.api.enchanting.EnchantingXPConsumer;
 import java.sql.*;
 import java.time.*;
 import java.util.*;
@@ -59,6 +61,10 @@ public final class DurableEnchantingStore {
         NativeProgress readForUpdate(Connection transaction, UUID player) throws SQLException;
         /** Includes native INT/DOUBLE progress and built-in stat/effect reward changes in this same transaction. */
         void apply(Connection transaction, UUID player, Transition transition) throws SQLException;
+        /** Optional native scalar writer; implementations must reject unregistered/foreign keys. */
+        default void writeScalar(Connection transaction, UUID player, String key, Number value)throws SQLException {
+            throw new SQLFeatureNotSupportedException("Native scalar writer not bound");
+        }
     }
     public record Delivery(UUID awardId, String scope, UUID player, UUID originalSession, Kind kind,
                            int level, double finalXP, Attribution attribution, UUID claim, UUID operationId, String receiptPayloadHash, String confirmedEvidence) {}
@@ -88,8 +94,9 @@ public final class DurableEnchantingStore {
         try(var c=pool.getConnection();var s=c.createStatement()) {
             s.setQueryTimeout(2);
             s.executeUpdate("CREATE TABLE IF NOT EXISTS "+table("fences")+" (scope VARCHAR(96) NOT NULL, player VARCHAR(36) NOT NULL, session_id VARCHAR(36) NOT NULL, revision BIGINT NOT NULL, lease_until BIGINT NOT NULL, PRIMARY KEY(scope,player))");
+            s.executeUpdate("CREATE TABLE IF NOT EXISTS "+table("writes")+" (scope VARCHAR(96) NOT NULL, player VARCHAR(36) NOT NULL, data_key VARCHAR(128) NOT NULL, revision BIGINT NOT NULL, write_seq BIGINT NOT NULL, PRIMARY KEY(scope,player,data_key))");
             s.executeUpdate("CREATE TABLE IF NOT EXISTS "+table("daily")+" (scope VARCHAR(96) NOT NULL, player VARCHAR(36) NOT NULL, day_id VARCHAR(10) NOT NULL, spent DOUBLE NOT NULL, PRIMARY KEY(scope,player,day_id))");
-            s.executeUpdate("CREATE TABLE IF NOT EXISTS "+table("receipts")+" (scope VARCHAR(96) NOT NULL, operation_id VARCHAR(36) NOT NULL, payload_hash VARCHAR(64) NOT NULL, player VARCHAR(36) NOT NULL, award_id VARCHAR(36) NOT NULL, final_xp DOUBLE NOT NULL, level_value INT NOT NULL, xp_value DOUBLE NOT NULL, revision BIGINT NOT NULL, evidence_payload VARCHAR(8192) NOT NULL, PRIMARY KEY(scope,operation_id), UNIQUE(award_id))");
+            s.executeUpdate("CREATE TABLE IF NOT EXISTS "+table("receipts")+" (scope VARCHAR(96) NOT NULL, operation_id VARCHAR(36) NOT NULL, payload_hash VARCHAR(64) NOT NULL, player VARCHAR(36) NOT NULL, award_id VARCHAR(36) NOT NULL, final_xp DOUBLE NOT NULL, level_value INT NOT NULL, xp_value DOUBLE NOT NULL, revision BIGINT NOT NULL, evidence_payload VARCHAR(8192) NOT NULL, session_id VARCHAR(36) NOT NULL, capture_id VARCHAR(36) NOT NULL, attribution VARCHAR(4096) NOT NULL, PRIMARY KEY(scope,operation_id), UNIQUE(award_id))");
             s.executeUpdate("CREATE TABLE IF NOT EXISTS "+table("outbox")+" (award_id VARCHAR(36) NOT NULL, scope VARCHAR(96) NOT NULL, player VARCHAR(36) NOT NULL, session_id VARCHAR(36) NOT NULL, kind VARCHAR(24) NOT NULL, level_value INT NOT NULL, final_xp DOUBLE NOT NULL, capture_id VARCHAR(36) NOT NULL, attribution VARCHAR(4096) NOT NULL, state VARCHAR(16) NOT NULL, claim_id VARCHAR(36), lease_until BIGINT NOT NULL, operation_id VARCHAR(36) NOT NULL, payload_hash VARCHAR(64) NOT NULL, evidence_payload VARCHAR(8192) NOT NULL, PRIMARY KEY(award_id,kind,level_value))");
         }
     }
@@ -140,6 +147,33 @@ public final class DurableEnchantingStore {
             return true;
         });
     }
+    /** Origin-captured ordinary scalar write. Fence, ordering marker and native value share one transaction.
+     * Ordinary per-key flushes do not advance the award revision. An award invalidates ALL old captures.
+     * This does not replace the domain mutation queue/quiescence needed around an asynchronous award.
+     */
+    public enum ScalarWriteResult { WRITTEN, SUPERSEDED, STALE_FENCE }
+    public boolean guardedScalarWrite(Fence origin,String key,Number value,long sequence)throws SQLException {
+        return writeCapturedScalar(origin,key,value,sequence)==ScalarWriteResult.WRITTEN;
+    }
+    public ScalarWriteResult writeCapturedScalar(Fence origin,String key,Number value,long sequence)throws SQLException {
+        Objects.requireNonNull(origin);Objects.requireNonNull(value);
+        if(key==null||key.length()>128||!key.matches("ecoskills:[a-z0-9/._-]+")||sequence<1||
+            !(value instanceof Integer||value instanceof Double)||!Double.isFinite(value.doubleValue()))throw new IllegalArgumentException("Native scalar");
+        return transaction(c->{
+            if(!lockFence(c,origin))return ScalarWriteResult.STALE_FENCE;
+            boolean exists=false;
+            try(var s=statement(c,"SELECT revision,write_seq FROM "+table("writes")+" WHERE scope=? AND player=? AND data_key=? FOR UPDATE",origin.scope,origin.player,key);var r=s.executeQuery()) {
+                if(r.next()){exists=true;if(r.getLong(1)==origin.revision&&r.getLong(2)>=sequence)return ScalarWriteResult.SUPERSEDED;}
+            }
+            nativeState.writeScalar(c,origin.player,key,value);
+            if(exists) {
+                try(var u=statement(c,"UPDATE "+table("writes")+" SET revision=?,write_seq=? WHERE scope=? AND player=? AND data_key=?",origin.revision,sequence,origin.scope,origin.player,key)){u.executeUpdate();}
+            }else {
+                try(var u=statement(c,"INSERT INTO "+table("writes")+" (scope,player,data_key,revision,write_seq) VALUES(?,?,?,?,?)",origin.scope,origin.player,key,origin.revision,sequence)){u.executeUpdate();}
+            }
+            return ScalarWriteResult.WRITTEN;
+        });
+    }
     public Receipt lookup(String scope,UUID operation)throws SQLException {
         try(var c=pool.getConnection()){return receipt(c,scope,operation,null);}
     }
@@ -172,7 +206,7 @@ public final class DurableEnchantingStore {
             long revision=Math.addExact(a.fence.revision,1);
             try(var s=statement(c,"UPDATE "+table("fences")+" SET revision=? WHERE scope=? AND player=?",revision,a.fence.scope,a.fence.player)){s.executeUpdate();}
             try(var s=statement(c,"UPDATE "+table("daily")+" SET spent=? WHERE scope=? AND player=? AND day_id=?",spent+amount,a.fence.scope,a.fence.player,day)){s.executeUpdate();}
-            try(var s=statement(c,"INSERT INTO "+table("receipts")+" (scope,operation_id,payload_hash,player,award_id,final_xp,level_value,xp_value,revision,evidence_payload) VALUES(?,?,?,?,?,?,?,?,?,?)",a.fence.scope,a.operation,a.boundPayloadHash(),a.fence.player,a.awardId,amount,transition.after.level,transition.after.xp,revision,a.confirmedEvidence)){s.executeUpdate();}
+            try(var s=statement(c,"INSERT INTO "+table("receipts")+" (scope,operation_id,payload_hash,player,award_id,final_xp,level_value,xp_value,revision,evidence_payload,session_id,capture_id,attribution) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",a.fence.scope,a.operation,a.boundPayloadHash(),a.fence.player,a.awardId,amount,transition.after.level,transition.after.xp,revision,a.confirmedEvidence,a.fence.session,a.attribution.captureId,a.attribution.opaqueToken)){s.executeUpdate();}
             // Zero final XP is a durable cap-exhausted result, never a pet notification.
             if(amount>0)insertOutbox(c,a,Kind.FINAL_XP,0,amount);
             for(int level:transition.levels)insertOutbox(c,a,Kind.LEVEL_EFFECT,level,amount);
@@ -213,7 +247,93 @@ public final class DurableEnchantingStore {
             return List.copyOf(result);
         });
     }
+    /** Explicit bounded reconciliation; never claims READY callbacks or executes external commands.
+     * A callback may have executed before its ack was lost. Keep REVIEW for human/domain reconciliation.
+     */
+    public int reconcileUncertainLevelCallbacks(String scope,int limit)throws SQLException {
+        if(scope==null||!scope.matches("[A-Za-z0-9._:/-]{1,96}")||limit<1||limit>32)throw new IllegalArgumentException("Reconciliation bounds");
+        return transaction(c->{
+            long time=now(c);int changed=0;
+            try(var s=statement(c,"SELECT award_id,level_value,claim_id FROM "+table("outbox")+" WHERE scope=? AND kind='LEVEL_EFFECT' AND state='RUNNING' AND lease_until<=? ORDER BY award_id,level_value LIMIT "+limit+" FOR UPDATE",scope,time);var r=s.executeQuery()) {
+                while(r.next())try(var u=statement(c,"UPDATE "+table("outbox")+" SET state='REVIEW' WHERE scope=? AND award_id=? AND kind='LEVEL_EFFECT' AND level_value=? AND state='RUNNING' AND claim_id=? AND lease_until<=?",scope,r.getString(1),r.getInt(2),r.getString(3),time)){changed+=u.executeUpdate();}
+            }
+            return changed;
+        });
+    }
+    /** Internal callback acknowledgement: compares the entire claimed immutable body, not only its token. */
     public boolean acknowledge(Delivery delivery)throws SQLException {
-        try(var c=pool.getConnection();var s=statement(c,"UPDATE "+table("outbox")+" SET state='ACKED' WHERE award_id=? AND kind=? AND level_value=? AND claim_id=? AND scope=? AND player=? AND state='RUNNING'",delivery.awardId,delivery.kind.name(),delivery.level,delivery.claim,delivery.scope,delivery.player)){return s.executeUpdate()==1;}
+        return transaction(c->{
+            try(var s=statement(c,"SELECT scope,player,session_id,final_xp,capture_id,attribution,operation_id,payload_hash,evidence_payload,lease_until FROM "+table("outbox")+" WHERE award_id=? AND kind=? AND level_value=? AND claim_id=? AND state='RUNNING' FOR UPDATE",delivery.awardId,delivery.kind.name(),delivery.level,delivery.claim);var r=s.executeQuery()) {
+                if(!r.next()||r.getLong(10)<=now(c)||!r.getString(1).equals(delivery.scope)||!r.getString(2).equals(delivery.player.toString())||
+                    !r.getString(3).equals(delivery.originalSession.toString())||Double.doubleToLongBits(r.getDouble(4))!=Double.doubleToLongBits(delivery.finalXP)||
+                    !r.getString(5).equals(delivery.attribution.captureId.toString())||!r.getString(6).equals(delivery.attribution.opaqueToken)||
+                    !delivery.attribution.originalSession.equals(delivery.originalSession)||!r.getString(7).equals(delivery.operationId.toString())||
+                    !r.getString(8).equals(delivery.receiptPayloadHash)||!r.getString(9).equals(delivery.confirmedEvidence))return false;
+            }
+            try(var u=statement(c,"UPDATE "+table("outbox")+" SET state='ACKED' WHERE award_id=? AND kind=? AND level_value=? AND claim_id=? AND state='RUNNING'",delivery.awardId,delivery.kind.name(),delivery.level,delivery.claim)){return u.executeUpdate()==1;}
+        });
+    }
+
+    /** Committed receipt reconstruction; does not echo request payload as evidence. */
+    public EnchantingXPProvider.Observation lookupReceipt(EnchantingXPProvider.ReceiptKey key)throws SQLException {
+        return transaction(c->observe(c,key));
+    }
+    private EnchantingXPProvider.Observation observe(Connection c,EnchantingXPProvider.ReceiptKey key)throws SQLException {
+        try(var s=statement(c,"SELECT award_id,final_xp,level_value,xp_value,revision,evidence_payload,session_id,capture_id,attribution,payload_hash,player FROM "+table("receipts")+" WHERE scope=? AND operation_id=?",key.scope(),key.operationId());var r=s.executeQuery()) {
+            if(!r.next())return observation(EnchantingXPProvider.State.NOT_FOUND,"receipt_not_found",null);
+            if(!r.getString(1).equals(key.awardId().toString()))return observation(EnchantingXPProvider.State.PAYLOAD_CONFLICT,"award_identity",null);
+            try {
+                var evidence=PurchaseEvidenceCodec.decode(r.getString(6));
+                if(!evidence.operationId().equals(key.operationId())||!evidence.scope().equals(key.scope())||
+                    !evidence.playerId().toString().equals(r.getString(11))||!evidence.sessionId().toString().equals(r.getString(7)))
+                    return observation(EnchantingXPProvider.State.REJECTED,"receipt_evidence_corrupt",null);
+                var attribution=new EnchantingXPConsumer.Attribution(UUID.fromString(r.getString(8)),new EnchantingXPConsumer.AttributionRequest(key.operationId(),evidence.playerId(),key.scope(),UUID.fromString(r.getString(7))),r.getString(9));
+                var reconstructed=new Award(key.operationId(),key.awardId(),evidence.payloadHash(),new Fence(key.scope(),evidence.playerId(),evidence.sessionId(),r.getLong(5)),0,
+                    new Attribution(attribution.captureId(),evidence.sessionId(),attribution.opaqueToken()),r.getString(6));
+                if(!reconstructed.boundPayloadHash().equals(r.getString(10)))return observation(EnchantingXPProvider.State.REJECTED,"receipt_binding_corrupt",null);
+                var receipt=new EnchantingXPProvider.CommittedReceipt(evidence,key.awardId(),r.getDouble(2),attribution,r.getString(10),r.getInt(3),r.getDouble(4),r.getLong(5));
+                return observation(EnchantingXPProvider.State.APPLIED,null,receipt);
+            }catch(java.io.IOException|IllegalArgumentException corrupt){return observation(EnchantingXPProvider.State.REJECTED,"receipt_corrupt",null);}
+        }
+    }
+    private static EnchantingXPProvider.Observation observation(EnchantingXPProvider.State state,String reason,EnchantingXPProvider.CommittedReceipt receipt) {
+        return new EnchantingXPProvider.Observation(state,reason,receipt);
+    }
+    private static boolean samePayload(EnchantingXPProvider.CommittedReceipt receipt,EnchantingXPConsumer.Delivery delivery) {
+        return receipt.evidence().equals(delivery.evidence())&&receipt.awardId().equals(delivery.awardId())&&
+            Double.doubleToLongBits(receipt.finalXP())==Double.doubleToLongBits(delivery.finalXP())&&
+            receipt.originalAttribution().equals(delivery.originalAttribution())&&receipt.receiptPayloadHash().equals(delivery.receiptPayloadHash());
+    }
+    public EnchantingXPProvider.Observation verifyDelivery(EnchantingXPConsumer.Delivery delivery)throws SQLException {
+        return transaction(c->{
+            var observed=observe(c,new EnchantingXPProvider.ReceiptKey(delivery.evidence().scope(),delivery.evidence().operationId(),delivery.awardId()));
+            if(observed.state()!=EnchantingXPProvider.State.APPLIED)return observed;
+            if(!samePayload(observed.receipt(),delivery))return observation(EnchantingXPProvider.State.PAYLOAD_CONFLICT,"delivery_payload",null);
+            try(var s=statement(c,"SELECT state,claim_id,lease_until FROM "+table("outbox")+" WHERE award_id=? AND scope=? AND kind='FINAL_XP' AND level_value=0 FOR UPDATE",delivery.awardId(),delivery.evidence().scope());var r=s.executeQuery()) {
+                if(!r.next())return observation(EnchantingXPProvider.State.REJECTED,"delivery_absent",null);
+                if(!"RUNNING".equals(r.getString(1))||!delivery.deliveryAttempt().toString().equals(r.getString(2))||r.getLong(3)<=now(c))
+                    return observation(EnchantingXPProvider.State.REJECTED,"attempt_not_current",null);
+            }
+            return observed;
+        });
+    }
+    /** Trust only the authorized consumer's committed outcome. Validation and CAS are one transaction. */
+    public EnchantingXPProvider.Ack acknowledgeDelivery(EnchantingXPConsumer.Delivery delivery,EnchantingXPConsumer.Consumption result)throws SQLException {
+        if(result!=EnchantingXPConsumer.Consumption.APPLIED&&result!=EnchantingXPConsumer.Consumption.ALREADY_APPLIED)return EnchantingXPProvider.Ack.REJECTED;
+        return transaction(c->{
+            var receipt=observe(c,new EnchantingXPProvider.ReceiptKey(delivery.evidence().scope(),delivery.evidence().operationId(),delivery.awardId()));
+            if(receipt.state()!=EnchantingXPProvider.State.APPLIED)return receipt.state()==EnchantingXPProvider.State.NOT_FOUND?EnchantingXPProvider.Ack.NOT_COMMITTED:
+                receipt.state()==EnchantingXPProvider.State.PAYLOAD_CONFLICT?EnchantingXPProvider.Ack.PAYLOAD_CONFLICT:EnchantingXPProvider.Ack.REJECTED;
+            if(!samePayload(receipt.receipt(),delivery))return EnchantingXPProvider.Ack.PAYLOAD_CONFLICT;
+            try(var s=statement(c,"SELECT state,claim_id,lease_until FROM "+table("outbox")+" WHERE award_id=? AND scope=? AND kind='FINAL_XP' AND level_value=0 FOR UPDATE",delivery.awardId(),delivery.evidence().scope());var r=s.executeQuery()) {
+                if(!r.next())return EnchantingXPProvider.Ack.NOT_COMMITTED;
+                if(!delivery.deliveryAttempt().toString().equals(r.getString(2)))return EnchantingXPProvider.Ack.STALE_ATTEMPT;
+                if("ACKED".equals(r.getString(1)))return EnchantingXPProvider.Ack.ALREADY_ACKED;
+                if(!"RUNNING".equals(r.getString(1))||r.getLong(3)<=now(c))return EnchantingXPProvider.Ack.STALE_ATTEMPT;
+            }
+            try(var u=statement(c,"UPDATE "+table("outbox")+" SET state='ACKED' WHERE award_id=? AND scope=? AND kind='FINAL_XP' AND level_value=0 AND state='RUNNING' AND claim_id=?",delivery.awardId(),delivery.evidence().scope(),delivery.deliveryAttempt())) {
+                return u.executeUpdate()==1?EnchantingXPProvider.Ack.ACKED:EnchantingXPProvider.Ack.STALE_ATTEMPT;
+            }
+        });
     }
 }

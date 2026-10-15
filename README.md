@@ -40,3 +40,7 @@
 ## Valerin read-only observation API
 
 See [OBSERVATION-API.md](docs/OBSERVATION-API.md) for UUID cache/storage contracts, supported backends, thread requirements and controlled runtime delivery.
+
+## Durable enchanting XP development
+
+Receipt/attempt-ack API and origin-fenced writer bridge are implemented but NOT a ready runtime provider. No runtime installation. See [ENCHANTING-PROVIDER-CONTRACT.md](docs/ENCHANTING-PROVIDER-CONTRACT.md) for the public contract, tests and remaining integration gates.
