@@ -3,6 +3,7 @@ package com.willfp.ecoskills.enchanting.persistence;
 import javax.sql.DataSource;
 import com.willfp.ecoskills.api.enchanting.EnchantingXPProvider;
 import com.willfp.ecoskills.api.enchanting.EnchantingXPConsumer;
+import com.willfp.ecoskills.api.enchanting.EnchantingPurchaseEvidence;
 import java.sql.*;
 import java.time.*;
 import java.util.*;
@@ -37,12 +38,12 @@ public final class DurableEnchantingStore {
             if(confirmedEvidence.isBlank()||confirmedEvidence.length()>8192)throw new IllegalArgumentException("Confirmed evidence bound");
             if(!payloadHash.matches("[0-9a-f]{64}")||!Double.isFinite(modifiedFinalXP)||modifiedFinalXP<0)
                 throw new IllegalArgumentException("Invalid prepared award");
-            if(!fence.session.equals(attribution.originalSession))throw new IllegalArgumentException("Attribution session mismatch");
+            // The current native-writer lease may differ after transfer. Purchase attribution never changes.
         }
         String boundPayloadHash() {
             try {
                 var hash=java.security.MessageDigest.getInstance("SHA-256");
-                for(String field:List.of(payloadHash,operation.toString(),awardId.toString(),fence.scope,fence.player.toString(),fence.session.toString(),attribution.captureId.toString(),attribution.originalSession.toString(),attribution.opaqueToken,confirmedEvidence)) {
+                for(String field:List.of(payloadHash,operation.toString(),awardId.toString(),fence.scope,fence.player.toString(),attribution.originalSession.toString(),attribution.captureId.toString(),attribution.originalSession.toString(),attribution.opaqueToken,confirmedEvidence)) {
                     byte[] bytes=field.getBytes(java.nio.charset.StandardCharsets.UTF_8);
                     hash.update(java.nio.ByteBuffer.allocate(4).putInt(bytes.length).array());hash.update(bytes);
                 }
@@ -59,6 +60,7 @@ public final class DurableEnchantingStore {
     }
     public interface NativeGateway {
         NativeProgress readForUpdate(Connection transaction, UUID player) throws SQLException;
+        default Map<String,Number> snapshot(Connection transaction,UUID player)throws SQLException {throw new SQLFeatureNotSupportedException("Native publication unavailable");}
         /** Includes native INT/DOUBLE progress and built-in stat/effect reward changes in this same transaction. */
         void apply(Connection transaction, UUID player, Transition transition) throws SQLException;
         /** Optional native scalar writer; implementations must reject unregistered/foreign keys. */
@@ -93,11 +95,24 @@ public final class DurableEnchantingStore {
     public void migrate()throws SQLException {
         try(var c=pool.getConnection();var s=c.createStatement()) {
             s.setQueryTimeout(2);
+            s.executeUpdate("CREATE TABLE IF NOT EXISTS "+table("settings")+" (singleton INT NOT NULL PRIMARY KEY, scope VARCHAR(96) NOT NULL)");
+            s.executeUpdate("CREATE TABLE IF NOT EXISTS "+table("intents")+" (scope VARCHAR(96) NOT NULL, operation_id VARCHAR(36) NOT NULL, player VARCHAR(36) NOT NULL, session_id VARCHAR(36) NOT NULL, PRIMARY KEY(scope,operation_id))");
+            s.executeUpdate("CREATE TABLE IF NOT EXISTS "+table("preparations")+" (scope VARCHAR(96) NOT NULL, operation_id VARCHAR(36) NOT NULL, player VARCHAR(36) NOT NULL, session_id VARCHAR(36) NOT NULL, capture_id VARCHAR(36) NOT NULL, attribution VARCHAR(4096) NOT NULL, phase VARCHAR(24) NOT NULL, evidence_payload VARCHAR(8192), calculation_id VARCHAR(36), lease_until BIGINT NOT NULL, modified_xp DOUBLE, PRIMARY KEY(scope,operation_id))");
             s.executeUpdate("CREATE TABLE IF NOT EXISTS "+table("fences")+" (scope VARCHAR(96) NOT NULL, player VARCHAR(36) NOT NULL, session_id VARCHAR(36) NOT NULL, revision BIGINT NOT NULL, lease_until BIGINT NOT NULL, PRIMARY KEY(scope,player))");
             s.executeUpdate("CREATE TABLE IF NOT EXISTS "+table("writes")+" (scope VARCHAR(96) NOT NULL, player VARCHAR(36) NOT NULL, data_key VARCHAR(128) NOT NULL, revision BIGINT NOT NULL, write_seq BIGINT NOT NULL, PRIMARY KEY(scope,player,data_key))");
             s.executeUpdate("CREATE TABLE IF NOT EXISTS "+table("daily")+" (scope VARCHAR(96) NOT NULL, player VARCHAR(36) NOT NULL, day_id VARCHAR(10) NOT NULL, spent DOUBLE NOT NULL, PRIMARY KEY(scope,player,day_id))");
             s.executeUpdate("CREATE TABLE IF NOT EXISTS "+table("receipts")+" (scope VARCHAR(96) NOT NULL, operation_id VARCHAR(36) NOT NULL, payload_hash VARCHAR(64) NOT NULL, player VARCHAR(36) NOT NULL, award_id VARCHAR(36) NOT NULL, final_xp DOUBLE NOT NULL, level_value INT NOT NULL, xp_value DOUBLE NOT NULL, revision BIGINT NOT NULL, evidence_payload VARCHAR(8192) NOT NULL, session_id VARCHAR(36) NOT NULL, capture_id VARCHAR(36) NOT NULL, attribution VARCHAR(4096) NOT NULL, PRIMARY KEY(scope,operation_id), UNIQUE(award_id))");
             s.executeUpdate("CREATE TABLE IF NOT EXISTS "+table("outbox")+" (award_id VARCHAR(36) NOT NULL, scope VARCHAR(96) NOT NULL, player VARCHAR(36) NOT NULL, session_id VARCHAR(36) NOT NULL, kind VARCHAR(24) NOT NULL, level_value INT NOT NULL, final_xp DOUBLE NOT NULL, capture_id VARCHAR(36) NOT NULL, attribution VARCHAR(4096) NOT NULL, state VARCHAR(16) NOT NULL, claim_id VARCHAR(36), lease_until BIGINT NOT NULL, operation_id VARCHAR(36) NOT NULL, payload_hash VARCHAR(64) NOT NULL, evidence_payload VARCHAR(8192) NOT NULL, PRIMARY KEY(award_id,kind,level_value))");
+            try(var check=c.prepareStatement("SELECT session_id,capture_id,attribution,evidence_payload FROM "+table("receipts")+" WHERE 1=0")){check.setQueryTimeout(2);check.executeQuery().close();}
+            String product=c.getMetaData().getDatabaseProductName();
+            if(product.equalsIgnoreCase("MySQL")||product.equalsIgnoreCase("MariaDB")) {
+                for(String name:List.of(prefix+"int",prefix+"double",prefix+"enchanting_fences",prefix+"enchanting_daily",prefix+"enchanting_receipts",prefix+"enchanting_outbox",prefix+"enchanting_writes",prefix+"enchanting_preparations",prefix+"enchanting_intents",prefix+"enchanting_settings")) {
+                    try(var check=c.prepareStatement("SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=?")) {
+                        check.setQueryTimeout(2);check.setString(1,name);try(var row=check.executeQuery()){if(!row.next()||!"InnoDB".equalsIgnoreCase(row.getString(1)))throw new SQLException("Transactional native/durable tables required");}
+                    }
+                }
+            }
+
         }
     }
     private interface Work<T>{T run(Connection c)throws SQLException;}
@@ -146,6 +161,101 @@ public final class DurableEnchantingStore {
             try(var u=statement(c,"UPDATE "+table("fences")+" SET revision=? WHERE scope=? AND player=?",Math.addExact(captured.revision,1),captured.scope,captured.player)){u.executeUpdate();}
             return true;
         });
+    }
+    /** One physical native profile namespace cannot safely be written under two independent fence scopes. */
+    public void bindScope(String scope)throws SQLException {
+        if(scope==null||!scope.matches("[A-Za-z0-9._:/-]{1,96}"))throw new IllegalArgumentException("Scope");
+        transaction(c->{
+            var save=c.setSavepoint();
+            try(var s=statement(c,"INSERT INTO "+table("settings")+" (singleton,scope) VALUES(1,?)",scope)){s.executeUpdate();}
+            catch(SQLException conflict){if(conflict.getSQLState()==null||!conflict.getSQLState().startsWith("23"))throw conflict;c.rollback(save);}
+            try(var s=statement(c,"SELECT scope FROM "+table("settings")+" WHERE singleton=1 FOR UPDATE");var row=s.executeQuery()) {
+                if(!row.next()||!scope.equals(row.getString(1)))throw new SQLException("Native profile prefix is already bound to another scope; explicit migration required");
+            }return null;
+        });
+    }
+    public record NativeSnapshot(Fence fence,Map<String,Number> values) {public NativeSnapshot{values=Map.copyOf(values);}}
+    public NativeSnapshot snapshot(Fence fence)throws SQLException {
+        return transaction(c->{if(!lockFence(c,fence))return null;return new NativeSnapshot(fence,nativeState.snapshot(c,fence.player));});
+    }
+    public NativeSnapshot snapshotCurrent(String scope,UUID player,UUID session)throws SQLException {
+        return transaction(c->{
+            try(var s=statement(c,"SELECT revision,lease_until FROM "+table("fences")+" WHERE scope=? AND player=? AND session_id=? FOR UPDATE",scope,player,session);var row=s.executeQuery()) {
+                if(!row.next()||row.getLong(2)<=now(c))return null;
+                var fence=new Fence(scope,player,session,row.getLong(1));return new NativeSnapshot(fence,nativeState.snapshot(c,player));
+            }
+        });
+    }
+    public boolean releaseSession(String scope,UUID player,UUID session)throws SQLException {
+        return transaction(c->{try(var s=statement(c,"UPDATE "+table("fences")+" SET lease_until=0,revision=revision+1 WHERE scope=? AND player=? AND session_id=?",scope,player,session)){return s.executeUpdate()==1;}});
+    }
+    public boolean release(Fence fence)throws SQLException {
+        return transaction(c->{
+            try(var s=statement(c,"UPDATE "+table("fences")+" SET lease_until=0,revision=revision+1 WHERE scope=? AND player=? AND session_id=? AND revision=?",fence.scope,fence.player,fence.session,fence.revision)){return s.executeUpdate()==1;}
+        });
+    }
+    public EnchantingXPConsumer.AttributionRequest intent(String scope,UUID operation)throws SQLException {
+        try(var c=pool.getConnection();var s=statement(c,"SELECT player,session_id FROM "+table("intents")+" WHERE scope=? AND operation_id=?",scope,operation);var r=s.executeQuery()) {
+            return r.next()?new EnchantingXPConsumer.AttributionRequest(operation,UUID.fromString(r.getString(1)),scope,UUID.fromString(r.getString(2))):null;
+        }
+    }
+    public EnchantingXPConsumer.AttributionRequest retainIntent(EnchantingXPConsumer.AttributionRequest request)throws SQLException {
+        return transaction(c->{
+            var save=c.setSavepoint();
+            try(var s=statement(c,"INSERT INTO "+table("intents")+" (scope,operation_id,player,session_id) VALUES(?,?,?,?)",request.scope(),request.operationId(),request.playerId(),request.originalSession())){s.executeUpdate();}
+            catch(SQLException conflict){if(conflict.getSQLState()==null||!conflict.getSQLState().startsWith("23"))throw conflict;c.rollback(save);}
+            try(var s=statement(c,"SELECT player,session_id FROM "+table("intents")+" WHERE scope=? AND operation_id=?",request.scope(),request.operationId());var r=s.executeQuery()) {
+                if(!r.next()||!r.getString(1).equals(request.playerId().toString()))throw new SQLException("Intent identity conflict");
+                return new EnchantingXPConsumer.AttributionRequest(request.operationId(),request.playerId(),request.scope(),UUID.fromString(r.getString(2)));
+            }
+        });
+    }
+    public EnchantingXPConsumer.Attribution captured(String scope,UUID operation)throws SQLException {
+        try(var c=pool.getConnection()){return captured(c,scope,operation);}
+    }
+    private EnchantingXPConsumer.Attribution captured(Connection c,String scope,UUID operation)throws SQLException {
+        try(var s=statement(c,"SELECT player,session_id,capture_id,attribution FROM "+table("preparations")+" WHERE scope=? AND operation_id=?",scope,operation);var r=s.executeQuery()) {
+            if(!r.next())return null;
+            return new EnchantingXPConsumer.Attribution(UUID.fromString(r.getString(3)),new EnchantingXPConsumer.AttributionRequest(operation,UUID.fromString(r.getString(1)),scope,UUID.fromString(r.getString(2))),r.getString(4));
+        }
+    }
+    public EnchantingXPConsumer.Attribution retainCapture(EnchantingXPConsumer.Attribution attribution)throws SQLException {
+        var a=attribution.request();
+        return transaction(c->{
+            var previous=captured(c,a.scope(),a.operationId());if(previous!=null){if(!previous.equals(attribution))throw new SQLException("Original capture conflict");return previous;}
+            var save=c.setSavepoint();
+            try(var s=statement(c,"INSERT INTO "+table("preparations")+" (scope,operation_id,player,session_id,capture_id,attribution,phase,lease_until) VALUES(?,?,?,?,?,?,'CAPTURED',0)",a.scope(),a.operationId(),a.playerId(),a.originalSession(),attribution.captureId(),attribution.opaqueToken())){s.executeUpdate();}
+            catch(SQLException duplicate){if(duplicate.getSQLState()==null||!duplicate.getSQLState().startsWith("23"))throw duplicate;c.rollback(save);previous=captured(c,a.scope(),a.operationId());if(!attribution.equals(previous))throw new SQLException("Original capture conflict");}
+            return attribution;
+        });
+    }
+    public record Calculation(String phase,UUID token,Double modifiedXP) {}
+    public Calculation beginCalculation(EnchantingPurchaseEvidence evidence)throws SQLException {
+        return transaction(c->{
+            try(var s=statement(c,"SELECT player,session_id,phase,evidence_payload,calculation_id,lease_until,modified_xp FROM "+table("preparations")+" WHERE scope=? AND operation_id=? FOR UPDATE",evidence.scope(),evidence.operationId());var r=s.executeQuery()) {
+                if(!r.next())return new Calculation("CAPTURE_ABSENT",null,null);
+                if(!r.getString(1).equals(evidence.playerId().toString())||!r.getString(2).equals(evidence.sessionId().toString()))return new Calculation("CONFLICT",null,null);
+                String payload=PurchaseEvidenceCodec.encode(evidence),stored=r.getString(4),phase=r.getString(3);
+                if(stored!=null&&!stored.equals(payload))return new Calculation("CONFLICT",null,null);
+                if(phase.equals("PREPARED"))return new Calculation(phase,null,r.getDouble(7));
+                if(phase.equals("CALCULATING")) {
+                    if(r.getLong(6)>now(c))return new Calculation("PENDING",null,null);
+                    try(var u=statement(c,"UPDATE "+table("preparations")+" SET phase='REVIEW' WHERE scope=? AND operation_id=?",evidence.scope(),evidence.operationId())){u.executeUpdate();}
+                    return new Calculation("REVIEW",null,null);
+                }
+                if(!phase.equals("CAPTURED"))return new Calculation(phase,null,null);
+                UUID token=UUID.randomUUID();
+                try(var u=statement(c,"UPDATE "+table("preparations")+" SET phase='CALCULATING',evidence_payload=?,calculation_id=?,lease_until=? WHERE scope=? AND operation_id=?",payload,token,now(c)+30000,evidence.scope(),evidence.operationId())){u.executeUpdate();}
+                return new Calculation("CALCULATING",token,null);
+            }
+        });
+    }
+    public boolean finishCalculation(EnchantingPurchaseEvidence evidence,UUID token,double modified,boolean cancelled)throws SQLException {
+        if(!Double.isFinite(modified)||modified<0)throw new IllegalArgumentException("Final XP");
+        return transaction(c->{try(var u=statement(c,"UPDATE "+table("preparations")+" SET phase=?,modified_xp=? WHERE scope=? AND operation_id=? AND phase='CALCULATING' AND calculation_id=? AND lease_until>?",cancelled?"REJECTED":"PREPARED",modified,evidence.scope(),evidence.operationId(),token,now(c))){return u.executeUpdate()==1;}});
+    }
+    public boolean review(Delivery d)throws SQLException {
+        return transaction(c->{try(var u=statement(c,"UPDATE "+table("outbox")+" SET state='REVIEW' WHERE award_id=? AND kind=? AND level_value=? AND scope=? AND claim_id=? AND state='RUNNING'",d.awardId,d.kind.name(),d.level,d.scope,d.claim)){return u.executeUpdate()==1;}});
     }
     /** Origin-captured ordinary scalar write. Fence, ordering marker and native value share one transaction.
      * Ordinary per-key flushes do not advance the award revision. An award invalidates ALL old captures.
@@ -206,7 +316,7 @@ public final class DurableEnchantingStore {
             long revision=Math.addExact(a.fence.revision,1);
             try(var s=statement(c,"UPDATE "+table("fences")+" SET revision=? WHERE scope=? AND player=?",revision,a.fence.scope,a.fence.player)){s.executeUpdate();}
             try(var s=statement(c,"UPDATE "+table("daily")+" SET spent=? WHERE scope=? AND player=? AND day_id=?",spent+amount,a.fence.scope,a.fence.player,day)){s.executeUpdate();}
-            try(var s=statement(c,"INSERT INTO "+table("receipts")+" (scope,operation_id,payload_hash,player,award_id,final_xp,level_value,xp_value,revision,evidence_payload,session_id,capture_id,attribution) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",a.fence.scope,a.operation,a.boundPayloadHash(),a.fence.player,a.awardId,amount,transition.after.level,transition.after.xp,revision,a.confirmedEvidence,a.fence.session,a.attribution.captureId,a.attribution.opaqueToken)){s.executeUpdate();}
+            try(var s=statement(c,"INSERT INTO "+table("receipts")+" (scope,operation_id,payload_hash,player,award_id,final_xp,level_value,xp_value,revision,evidence_payload,session_id,capture_id,attribution) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",a.fence.scope,a.operation,a.boundPayloadHash(),a.fence.player,a.awardId,amount,transition.after.level,transition.after.xp,revision,a.confirmedEvidence,a.attribution.originalSession,a.attribution.captureId,a.attribution.opaqueToken)){s.executeUpdate();}
             // Zero final XP is a durable cap-exhausted result, never a pet notification.
             if(amount>0)insertOutbox(c,a,Kind.FINAL_XP,0,amount);
             for(int level:transition.levels)insertOutbox(c,a,Kind.LEVEL_EFFECT,level,amount);
@@ -226,14 +336,28 @@ public final class DurableEnchantingStore {
         return new Transition(before,new NativeProgress(level,xp),crossed);
     }
     private void insertOutbox(Connection c,Award a,Kind kind,int level,double amount)throws SQLException {
-        try(var s=statement(c,"INSERT INTO "+table("outbox")+" (award_id,scope,player,session_id,kind,level_value,final_xp,capture_id,attribution,state,claim_id,lease_until,operation_id,payload_hash,evidence_payload) VALUES(?,?,?,?,?,?,?,?,?,'READY',NULL,0,?,?,?)",a.awardId,a.fence.scope,a.fence.player,a.fence.session,kind.name(),level,amount,a.attribution.captureId,a.attribution.opaqueToken,a.operation,a.boundPayloadHash(),a.confirmedEvidence)){s.executeUpdate();}
+        try(var s=statement(c,"INSERT INTO "+table("outbox")+" (award_id,scope,player,session_id,kind,level_value,final_xp,capture_id,attribution,state,claim_id,lease_until,operation_id,payload_hash,evidence_payload) VALUES(?,?,?,?,?,?,?,?,?,'READY',NULL,0,?,?,?)",a.awardId,a.fence.scope,a.fence.player,a.attribution.originalSession,kind.name(),level,amount,a.attribution.captureId,a.attribution.opaqueToken,a.operation,a.boundPayloadHash(),a.confirmedEvidence)){s.executeUpdate();}
     }
     /** Poller owns one named consumer per kind. FINAL_XP can replay; ambiguous legacy effects go to REVIEW. */
     public List<Delivery> claim(String scope,Kind kind,int limit,long leaseMillis)throws SQLException {
+        return claim(scope,kind,limit,leaseMillis,null);
+    }
+    public List<Delivery> claimCallbacks(String scope,Set<UUID> localSessions,int limit,long leaseMillis)throws SQLException {
+        if(localSessions.size()>512)throw new IllegalArgumentException("Session bound");
+        return claim(scope,Kind.LEVEL_EFFECT,limit,leaseMillis,Set.copyOf(localSessions));
+    }
+    private List<Delivery> claim(String scope,Kind kind,int limit,long leaseMillis,Set<UUID> localSessions)throws SQLException {
         if(limit<1||limit>32||leaseMillis<1000||leaseMillis>60_000)throw new IllegalArgumentException("Outbox bounds");
         return transaction(c->{
             long now=now(c);var result=new ArrayList<Delivery>();
-            try(var s=statement(c,"SELECT award_id,scope,player,session_id,level_value,final_xp,capture_id,attribution,operation_id,payload_hash,evidence_payload,state FROM "+table("outbox")+" WHERE scope=? AND kind=? AND (state='READY' OR (state='RUNNING' AND lease_until<=?)) ORDER BY award_id,level_value LIMIT "+limit+" FOR UPDATE",scope,kind.name(),now);var r=s.executeQuery()) {
+            var parameters=new ArrayList<Object>(List.of(scope,kind.name(),now));String ownership="";
+            if(localSessions!=null) {
+                ownership=" AND (state='RUNNING' ";
+                if(!localSessions.isEmpty()){ownership+=" OR session_id IN ("+String.join(",",Collections.nCopies(localSessions.size(),"?"))+")";parameters.addAll(localSessions);}
+                ownership+=" OR NOT EXISTS (SELECT 1 FROM "+table("fences")+" f WHERE f.scope=o.scope AND f.player=o.player AND f.session_id=o.session_id AND f.lease_until>?))";
+                parameters.add(now);
+            }
+            try(var s=statement(c,"SELECT award_id,scope,player,session_id,level_value,final_xp,capture_id,attribution,operation_id,payload_hash,evidence_payload,state FROM "+table("outbox")+" o WHERE scope=? AND kind=? AND (state='READY' OR (state='RUNNING' AND lease_until<=?))"+ownership+" ORDER BY award_id,level_value LIMIT "+limit+" FOR UPDATE",parameters.toArray());var r=s.executeQuery()) {
                 while(r.next()) {
                     UUID award=UUID.fromString(r.getString(1)),player=UUID.fromString(r.getString(3)),session=UUID.fromString(r.getString(4)),claim=UUID.randomUUID();int level=r.getInt(5);
                     if(kind==Kind.LEVEL_EFFECT&&r.getString(12).equals("RUNNING")) {
@@ -245,6 +369,14 @@ public final class DurableEnchantingStore {
                 }
             }
             return List.copyOf(result);
+        });
+    }
+    public int reconcileUncertainCalculations(String scope,int limit)throws SQLException {
+        if(limit<1||limit>32)throw new IllegalArgumentException("Reconciliation bound");
+        return transaction(c->{int count=0;long time=now(c);
+            try(var s=statement(c,"SELECT operation_id FROM "+table("preparations")+" WHERE scope=? AND phase='CALCULATING' AND lease_until<=? ORDER BY operation_id LIMIT "+limit+" FOR UPDATE",scope,time);var rows=s.executeQuery()) {
+                while(rows.next())try(var u=statement(c,"UPDATE "+table("preparations")+" SET phase='REVIEW' WHERE scope=? AND operation_id=? AND phase='CALCULATING' AND lease_until<=?",scope,rows.getString(1),time)){count+=u.executeUpdate();}
+            }return count;
         });
     }
     /** Explicit bounded reconciliation; never claims READY callbacks or executes external commands.

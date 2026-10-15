@@ -144,4 +144,34 @@ class ReceiptProviderTest {
         assertEquals(0,store.reconcileUncertainLevelCallbacks("survival",32));
         assertEquals(1,store.claim("survival",Kind.LEVEL_EFFECT,32,1000).size());
     }
+    @Test void transferUsesCurrentWriterLeaseButReceiptAndReplayRetainOriginalPurchaseSession()throws Exception {
+        var original=award.attribution();store.releaseSession("survival",fixture.player,fixture.session);
+        UUID currentSession=UUID.randomUUID();var current=store.acquire("survival",fixture.player,currentSession,60000);
+        var transferred=new Award(award.operation(),award.awardId(),award.payloadHash(),current,award.modifiedFinalXP(),original,award.confirmedEvidence());
+        assertEquals(Status.APPLIED,store.award(transferred,50,l->1000).status());
+        assertEquals(evidence.sessionId(),store.lookupReceipt(key()).receipt().originalAttribution().request().originalSession());
+        assertEquals(Status.APPLIED,store.award(award,50,l->1000).status());
+        assertEquals(award.modifiedFinalXP(),fixture.nativeXP(pool));
+        var delivery=store.claim("survival",Kind.FINAL_XP,1,1000).getFirst();assertEquals(fixture.session,delivery.originalSession());
+        assertFalse(store.releaseSession("survival",fixture.player,fixture.session));
+        assertTrue(store.releaseSession("survival",fixture.player,currentSession));
+    }
+    @Test void callbackRecoveryDoesNotStealAnotherLiveNodesOriginalSession()throws Exception {
+        var levels=new Award(award.operation(),award.awardId(),award.payloadHash(),award.fence(),250,award.attribution(),award.confirmedEvidence());
+        store.award(levels,50,l->100);
+        assertTrue(store.claimCallbacks("survival",Set.of(UUID.randomUUID()),32,1000).isEmpty());
+        assertEquals(1,store.claimCallbacks("survival",Set.of(fixture.session),1,1000).size());
+        fixture.time.now.addAndGet(60001);
+        assertEquals(1,store.claimCallbacks("survival",Set.of(),32,1000).size());
+    }
+    @Test void recoveryMarksUncertainModifierCallbacksForReviewWithoutReplayingThem()throws Exception {
+        var original=new EnchantingXPConsumer.Attribution(award.attribution().captureId(),new EnchantingXPConsumer.AttributionRequest(evidence.operationId(),evidence.playerId(),evidence.scope(),evidence.sessionId()),award.attribution().opaqueToken());
+        store.retainCapture(original);assertEquals("CALCULATING",store.beginCalculation(evidence).phase());
+        assertEquals(0,store.reconcileUncertainCalculations("survival",32));fixture.time.now.addAndGet(30001);
+        assertEquals(1,store.reconcileUncertainCalculations("survival",32));assertEquals("REVIEW",store.beginCalculation(evidence).phase());
+    }
+    @Test void aSharedNativePrefixCannotInitializeTwoIndependentWriterScopes()throws Exception {
+        store.bindScope("survival");store.bindScope("survival");
+        assertThrows(java.sql.SQLException.class,()->store.bindScope("test"));store.bindScope("survival");
+    }
 }

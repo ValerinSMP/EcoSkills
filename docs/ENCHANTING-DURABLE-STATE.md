@@ -1,11 +1,6 @@
-# XP durable — recibo público e integración de origen (2026-10-15)
-
-- Implementados EnchantingXPProvider v1: registro/retirada del consumidor autorizado, lookupReceipt, verifyDelivery y acknowledgeDelivery asíncronos, evidencia reconstruida, comparación completa e intento vigente/lease/CAS. SDK consumer v1 preservado; APPLIED/ALREADY solo se aceptan como compromiso durable del consumidor. Timeout no vuelve a conceder ni cambia identidad.
-- eco captura PreparedProfileWrite antes de la caché y conserva contexto a través del coalescer/ejecutor. FencedNativeProfileWriter conecta esa ruta con la transacción del store, revisión/sesión y secuencia por clave. Prueba usa handler real y tablas escalares H2; no MySQL/Paper. Reconciliación acotada de LEVEL_EFFECT incierto → REVIEW sin ejecutar premios.
-- NO proveedor runtime completo: faltan cola de operaciones nativas completas/publicación coherente de caché/holders, acceso acotado al handler MySQL ya inicializado, bootstrap/sesiones/recovery y autoridad genuina de compra vEnchanting. No registrar ni indicar ready; no basta instalar el interceptor. Son pendientes de implementación, además de la aceptación MySQL/Test.
-- Compilado en personal, ejecutor limitado, JDK25/release21. EcoSkills95 + eco-api37 pruebas; 0fallos/errores/omisiones. 17nuevas respecto de82+33; además compilación core-plugin Kotlin de eco. ABI: 10clases previas SDK draft2 idénticas byte a byte. No prueba de rendimiento, consumidor real ni MySQL/Test.
-- Entrega artifacts/eco-suite/provider-20261015; API c64658f437003e4f71a3ef9eb105f8f4be6bb7ad1d17d5873b8b7c5008e58f8d; desarrollo EcoSkills ff664decd918b3727178ea34fdb9b9e58ea0ea49edd814dbf8ec0465543c04f6; desarrollo eco 1cfaaf8deab44972f4c62d3d44526800a63a14abb347325305af1bbcf1d76f53. Bibliotecas sin plugin.yml; NO instalables. No hay JAR runtime completo de compras listo.
-- No instalación, lifecycle ni DDL/DML real. EcoSkills instalado Custom/Sync/Test conserva 1ad3d552…; vPets1.29.1 instalado conserva832b7f16… y candidato1.30.0 permanece fuera. vPets/vEnchanting fuentes sin editar. Cambios ajenos preservados.
-- Contrato y handoff: docs/ENCHANTING-PROVIDER-CONTRACT.md. No exponer token de captura ni hash de coordinación en observaciones web. Pendientes y límites explícitos; contratos anteriores son históricos cuando discrepan con este estado.
-
-See ENCHANTING-PROVIDER-CONTRACT.md for the exact API and remaining release gates.
+# Proveedor runtime — 2026-10-15
+Implementados cola nativa completa, handler MySQL existente, fence/revisión/sesiones, publicación de caché/holders, preparePurchase/grantConfirmedPurchase y recuperación acotada. Recibos/verificación/ack conservados.
+190 tests JVM/H2/simulados sin fallos; JDK25/release21, personal limitado. Java público compila y consumidor4781ed1 enlaza sin ejecutarse.
+No instalación/activación/SQL real/lifecycle. Default desactivado. Artefactos en manifest.json/SHA256SUMS de runtime-20261015.
+Implementación externa pendiente: autoridad vEnchanting y adaptador vPets. Pruebas pendientes: MySQL/Paper/Test, transferencias, inventario/callbacks reales y carga.
+Contrato ENCHANTING-PROVIDER-CONTRACT.md; handoffs VENCHANTING-RUNTIME-HANDOFF.md y VPETS-DURABLE-XP-HANDOFF.md. Documentos parciales anteriores son históricos.

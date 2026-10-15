@@ -53,6 +53,18 @@ public interface EnchantingXPProvider {
      */
     Access registerConsumer(Plugin owner, EnchantingXPConsumer consumer);
     void unregisterConsumer(Plugin owner, EnchantingXPConsumer consumer);
+    /** Register the real owning plugin instance. No ready flag or boolean proof is accepted. */
+    void registerPurchaseAuthority(Plugin owner,EnchantingPurchaseAuthority authority);
+    void unregisterPurchaseAuthority(Plugin owner,EnchantingPurchaseAuthority authority);
+    record Session(UUID playerId,UUID originalSession,String scope) {}
+    /** MAIN, absent while admission/transfer/reconciliation is incomplete. */
+    Optional<Session> session(UUID playerId);
+    /** MAIN entry BEFORE checkout; result completes only after original attribution is durably retained. */
+    CompletionStage<EnchantingXPConsumer.Attribution> preparePurchase(Plugin owner,UUID playerId,UUID operationId);
+    /** Always reuse the same confirmation. Receipt APPLIED, not future completion alone, confirms a grant. */
+    CompletionStage<Observation> grantConfirmedPurchase(Plugin owner,EnchantingPurchaseAuthority.Confirmation confirmation);
+    /** One bounded recovery pass, no polling. MAIN entry, max32 claims per kind. */
+    CompletionStage<Integer> recoverDeliveries(Plugin owner,int limit);
     /** Capability is bound to an authorized owner/scope. It must not be shared with other plugins. */
     interface Access {
         CompletionStage<Observation> lookupReceipt(ReceiptKey key);

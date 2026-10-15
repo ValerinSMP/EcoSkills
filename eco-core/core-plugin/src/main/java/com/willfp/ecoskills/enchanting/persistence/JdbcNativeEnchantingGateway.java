@@ -18,6 +18,9 @@ public final class JdbcNativeEnchantingGateway implements NativeGateway {
     private final Map<Integer,List<Reward>> rewards;
     private final Map<String,Class<? extends Number>> scalarTypes;
     public JdbcNativeEnchantingGateway(String prefix,String levelKey,int nativeStartLevel,String xpKey,double nativeStartXP,Map<Integer,List<Reward>> nativeRewards) {
+        this(prefix,levelKey,nativeStartLevel,xpKey,nativeStartXP,nativeRewards,Map.of());
+    }
+    public JdbcNativeEnchantingGateway(String prefix,String levelKey,int nativeStartLevel,String xpKey,double nativeStartXP,Map<Integer,List<Reward>> nativeRewards,Map<String,Class<? extends Number>> registeredScalars) {
         if(!prefix.matches("[A-Za-z0-9_]{0,48}"))throw new IllegalArgumentException("Prefix");
         key(levelKey);key(xpKey);if(nativeStartLevel<0||!Double.isFinite(nativeStartXP)||nativeStartXP<0)throw new IllegalArgumentException("Native defaults");
         ints="`"+prefix+"int`";doubles="`"+prefix+"double`";this.levelKey=levelKey;this.xpKey=xpKey;startLevel=nativeStartLevel;startXP=nativeStartXP;
@@ -26,7 +29,9 @@ public final class JdbcNativeEnchantingGateway implements NativeGateway {
         nativeRewards.forEach((level,rows)->{if(level<1||level>1024)throw new IllegalArgumentException("Reward bound");copy.put(level,List.copyOf(rows));});
         if(copy.size()>1024||copy.values().stream().mapToInt(List::size).sum()>4096)throw new IllegalArgumentException("Reward count");rewards=Map.copyOf(copy);
         var types=new HashMap<String,Class<? extends Number>>();types.put(levelKey,Integer.class);types.put(xpKey,Double.class);
-        rewards.values().forEach(rows->rows.forEach(reward->types.put(reward.key,Integer.class)));scalarTypes=Map.copyOf(types);
+        rewards.values().forEach(rows->rows.forEach(reward->types.put(reward.key,Integer.class)));
+        registeredScalars.forEach((name,type)->{key(name);if(type!=Integer.class&&type!=Double.class)throw new IllegalArgumentException("Scalar type");var old=types.putIfAbsent(name,type);if(old!=null&&old!=type)throw new IllegalArgumentException("Scalar collision");});
+        scalarTypes=Map.copyOf(types);
     }
     private static void key(String name){if(name==null||name.length()>128||!name.matches("ecoskills:[a-z0-9/._-]+"))throw new IllegalArgumentException("Not an EcoSkills native key");}
     private byte[] bytes(UUID id){return ByteBuffer.allocate(16).putLong(id.getMostSignificantBits()).putLong(id.getLeastSignificantBits()).array();}
@@ -53,6 +58,23 @@ public final class JdbcNativeEnchantingGateway implements NativeGateway {
         var type=scalarTypes.get(key);
         if(type==null||value==null||!type.isInstance(value)||!Double.isFinite(value.doubleValue()))throw new SQLException("Unregistered or mistyped native scalar");
         write(c,type==Integer.class?ints:doubles,player,key,value);
+    }
+    @Override public Map<String,Number> snapshot(Connection c,UUID player)throws SQLException {
+        var result=new LinkedHashMap<String,Number>();
+        for(Class<? extends Number> type:List.of(Integer.class,Double.class)) {
+            var names=scalarTypes.entrySet().stream().filter(e->e.getValue()==type).map(Map.Entry::getKey).sorted().toList();
+            if(names.isEmpty())continue;
+            String table=type==Integer.class?ints:doubles;
+            String placeholders=String.join(",",Collections.nCopies(names.size(),"?"));
+            try(var s=c.prepareStatement("SELECT dataKey,dataValue FROM "+table+" WHERE profileUUID=? AND dataKey IN ("+placeholders+")")) {
+                s.setQueryTimeout(2);s.setBytes(1,bytes(player));for(int i=0;i<names.size();i++)s.setString(i+2,names.get(i));
+                try(var row=s.executeQuery()) {while(row.next()) {
+                    Number value;if(type==Integer.class)value=Integer.valueOf(row.getInt(2));else value=Double.valueOf(row.getDouble(2));
+                    if(row.wasNull()||!Double.isFinite(value.doubleValue()))throw new SQLException("Invalid native snapshot");result.put(row.getString(1),value);
+                }}
+            }
+        }
+        return Map.copyOf(result);
     }
     @Override public NativeProgress readForUpdate(Connection c,UUID player)throws SQLException {
         return new NativeProgress(read(c,ints,player,levelKey,startLevel).intValue(),read(c,doubles,player,xpKey,startXP).doubleValue());

@@ -39,6 +39,12 @@ public final class DurableReceiptService implements EnchantingXPProvider, AutoCl
         if(closed.get())return new Readiness(false,CONTRACT_VERSION,EnchantingXPConsumer.CONTRACT_VERSION,Set.of("closed"));
         return readiness.get();
     }
+    @Override public void registerPurchaseAuthority(Plugin p,EnchantingPurchaseAuthority a){throw new UnsupportedOperationException("Receipt delegate only");}
+    @Override public void unregisterPurchaseAuthority(Plugin p,EnchantingPurchaseAuthority a){throw new UnsupportedOperationException("Receipt delegate only");}
+    @Override public Optional<Session> session(UUID p){return Optional.empty();}
+    @Override public CompletionStage<EnchantingXPConsumer.Attribution> preparePurchase(Plugin p,UUID u,UUID o){return CompletableFuture.failedFuture(new IllegalStateException("Runtime provider required"));}
+    @Override public CompletionStage<Observation> grantConfirmedPurchase(Plugin p,EnchantingPurchaseAuthority.Confirmation c){return CompletableFuture.completedStage(unavailable("runtime_provider_required"));}
+    @Override public CompletionStage<Integer> recoverDeliveries(Plugin p,int n){return CompletableFuture.failedFuture(new IllegalStateException("Runtime provider required"));}
     @Override public synchronized Access registerConsumer(Plugin owner,EnchantingXPConsumer consumer) {
         Objects.requireNonNull(consumer);
         if(owner!=authorizedOwner||closed.get())throw new SecurityException("Unauthorized consumer");

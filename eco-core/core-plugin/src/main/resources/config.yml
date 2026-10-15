@@ -419,3 +419,9 @@ skills:
       pitch: 0.8
       # The volume
       volume: 1.0
+
+# Optional durable XP integration. Enable only with the matching eco runtime and owning adapters.
+# All writers sharing eco profile tables must run the fenced runtime before enabling purchases.
+enchanting-purchase-xp:
+  enabled: false
+  scope: ""

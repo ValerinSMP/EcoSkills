@@ -1,65 +1,128 @@
-# EcoSkills durable XP — public receipt contract v1 (2026-10-15)
+# EcoSuite — proveedor runtime durable de XP de compras, contrato final v1
 
-## Status
+Fecha: 2026-10-15. Consumidor compatible: vPets `4781ed1`, EnchantingXPConsumer.CONTRACT_VERSION=1. El proveedor y la aplicación nativa de mejoras están implementados y se entregan como candidatos runtime; no instalados ni activos por esta entrega. La confirmación legítima la implementa vEnchanting contra su propio ledger; el adaptador y bootstrap de vPets pertenecen a su chat. Registrar clases o activar una opción no prueba una compra.
 
-The receipt/verification/attempt-ack interface is implemented. The origin-fenced writer bridge is implemented against eco's actual handler, and exercised with H2 native scalar tables. This is NOT a complete, ready runtime provider. There is no plugin bootstrap/ServicesManager registration, verified purchase-authority adapter, complete native mutation queue/cache publication or recovery wiring. No installation/lifecycle/real MySQL migration occurred. vPets 4781ed1 / candidate 1.30.0 remains uninstalled. Do not enable purchases, claim readiness or install these development libraries.
+## Descubrimiento, disponibilidad y activación futura
 
-The existing EnchantingXPConsumer CONTRACT_VERSION=1 and its capture/consume descriptors are unchanged. EnchantingXPProvider CONTRACT_VERSION=1 is an additive public contract for receipt access, not a grant API. A full runtime SDK release remains blocked by the integration items below.
+Servicio Bukkit `com.willfp.ecoskills.api.enchanting.EnchantingXPProvider`. Se registra mediante ServicesManager solo después de conectar el handler MySQL inicializado de eco, comprobar/migrar las tablas propias y conectar el escritor. El consumidor debe consultar el registro al habilitarse y escuchar ServiceRegisterEvent/ServiceUnregisterEvent; no usar reflexión sobre implementaciones ni polling. La clase pública `EnchantingXPProvider` y sus DTO son del runtime EcoSkills; SDK compileOnly/provided, nunca sombreado ni instalado como plugin.
 
-## Exact public methods
+Configuración nativa opcional (default entregado: desactivado):
 
-Package `com.willfp.ecoskills.api.enchanting`:
+```yaml
+enchanting-purchase-xp:
+  enabled: false
+  scope: ""
+```
 
-- `EnchantingXPProvider.Readiness readiness()`
-- `EnchantingXPProvider.Access registerConsumer(org.bukkit.plugin.Plugin owner, EnchantingXPConsumer consumer)`
-- `void unregisterConsumer(org.bukkit.plugin.Plugin owner, EnchantingXPConsumer consumer)`
-- `Access.lookupReceipt(EnchantingXPProvider.ReceiptKey)` → `CompletionStage<Observation>`
+El ámbito es explícito y común entre los nodos que comparten tablas nativas; no es el ID del servidor. El prefijo físico queda ligado durablemente a un solo scope: no se permite elegir otro para abrir una segunda autoridad de fences/cap sobre los mismos perfiles. Test necesita almacenamiento/prefijo propio; otro scope sobre las mismas tablas NO lo aísla. Todos los escritores que compartan ese prefijo deben ejecutar el runtime actualizado. Esto es una condición de despliegue: el proveedor no puede descubrir un servidor antiguo que escriba fuera de su protocolo.
+
+Requiere handler MySQL nativo, almacenamiento compartido de EcoSkills (no local), al menos tres conexiones del pool existente, tablas InnoDB y Encantador nativo con hasta1024 niveles y requisitos positivos finitos. Usa claves registradas reales de skills/XP, stats y efectos; no cambia BD/progresión a otra representación. Reutiliza el pool de eco; al activar el escritor limita la espera de adquisición a3s. No copia credenciales ni crea otro pool.
+
+`readiness()` exige MAIN. Devuelve ready solo si el backend y su cola están inicializados, no hubo cambio de configuración que requiera reinicio y están registrados el consumidor y la autoridad reales. Es disponibilidad LOCAL del protocolo, no prueba de compra ni verificación del despliegue de otros nodos. Antes de una compra también debe existir la sesión del jugador. Deshabilitar un participante revoca su registro. Un reload de EcoSkills posterior a la inicialización detiene compras nuevas hasta un reinicio completo; no soporta hot-unload/reemplazo individual de la barrera de persistencia. El resto de las rutas legacy conserva sus firmas. Esta entrega no habilita configuración ni ejecuta lifecycle.
+
+## Métodos públicos del proveedor
+
+Paquete `com.willfp.ecoskills.api.enchanting`:
+
+- `Readiness readiness()`
+- `Access registerConsumer(Plugin owner, EnchantingXPConsumer consumer)`
+- `void unregisterConsumer(Plugin owner, EnchantingXPConsumer consumer)`
+- `void registerPurchaseAuthority(Plugin owner, EnchantingPurchaseAuthority authority)`
+- `void unregisterPurchaseAuthority(Plugin owner, EnchantingPurchaseAuthority authority)`
+- `Optional<Session> session(UUID playerId)`
+- `CompletionStage<EnchantingXPConsumer.Attribution> preparePurchase(Plugin owner, UUID playerId, UUID operationId)`
+- `CompletionStage<Observation> grantConfirmedPurchase(Plugin owner, EnchantingPurchaseAuthority.Confirmation confirmation)`
+- `CompletionStage<Integer> recoverDeliveries(Plugin owner, int limit)`
+
+Las entradas anteriores requieren MAIN. Solo pueden registrar/conceder los objetos Plugin reales que Bukkit identifica como vEnchanting/vPets, según su función. El estado del propietario se compara por identidad, no por un nombre que mande el llamador. Es coordinación entre plugins de confianza en el mismo JVM, no aislamiento frente a un plugin malicioso.
+
+Las capacidades de recibo ya existentes se conservan; sus métodos se pueden invocar desde cualquier hilo y hacen el SQL fuera de MAIN:
+
+- `Access.lookupReceipt(ReceiptKey)` → `CompletionStage<Observation>`
 - `Access.verifyDelivery(EnchantingXPConsumer.Delivery)` → `CompletionStage<Observation>`
 - `Access.acknowledgeDelivery(EnchantingXPConsumer.Delivery, EnchantingXPConsumer.Consumption)` → `CompletionStage<Ack>`
 
-ReceiptKey contains scope, operationId, awardId. CommittedReceipt returns full reconstructed EnchantingPurchaseEvidence, awardId, exact final double XP, ORIGINAL Attribution, receiptPayloadHash, committed native level/XP/revision. DTOs are immutable; Readiness copies blockers with Set.copyOf. No pool, credentials, SQL or other-plugin data is exported through this interface.
+No se expone SQL, pool ni Connection por el proveedor o su SDK. `ProfileMutationAccess` es un SPI privilegiado de eco para su productor nativo; no es una API para vNetwork, web, bot, vPets ni vEnchanting. Compartir MySQL no autoriza consultar datos de otros plugins.
 
-Registration checks the exact configured owner plugin instance, not a name. A different consumer cannot replace a registered one. Unregister revokes issued capabilities and queued work. This is a trusted in-process plugin contract, not a sandbox against malicious server plugins. Authorize/revoke helpers are implementation details, excluded from the API JAR. No consumer registration occurs merely by loading these classes.
+## Antes de checkout: atribución original durable
 
-## Lookup, verification and ack
+1. El cliente obtiene el servicio y comprueba readiness; ninguna respuesta ausente significa nivel0 o compra autorizada.
+2. Crea una sola operationId para esa operación y llama preparePurchase ANTES de cobrar o aplicar el encantamiento.
+3. EcoSkills retiene durablemente la intención y su sesión original ANTES de invocar capture. El consumidor captura en MAIN y persiste su contexto propio asíncronamente; el proveedor conserva captureId/request/token después de su confirmación.
+4. Solo completar esa preparación permite comenzar checkout. Ante timeout, repetir con la MISMA operationId. La intención y captura anteriores se recuperan sin escoger una mascota/sesión nueva, incluso tras reconectar.
+5. vEnchanting guarda la Attribution recibida junto a la operación. Sus campos no son prueba del pago ni del ítem entregado.
 
-Lookup reads committed provider rows, never reflects a supplied receipt as proof. It decodes a bounded versioned binary/base64 payload and rechecks binding of evidence, original session, captureId/token, player, scope, operation and stable award. Absence is NOT_FOUND, not invented PENDING. Corruption is REJECTED. Wrong award identity is PAYLOAD_CONFLICT. Query/queue/timeout failures are unavailable/unknown; they never prove rejection or permission to issue another award.
+La sesión del proveedor y la sesión interna de vPets son distintas. El token opaco no se interpreta, no se publica en web/bot y no se reconstruye desde una mascota actual.
 
-A lookup APPLIED is NOT delivery authorization. verifyDelivery additionally compares the entire evidence, exact double bits, ORIGINAL attribution and receiptPayloadHash, and locks/checks FINAL_XP outbox RUNNING with the same unexpired deliveryAttempt. READY, ACKED, REVIEW, absent, expired and replaced attempts cannot verify as APPLIED. It does not require the original game lease to remain alive after commit.
+## Confirmación genuina que debe proporcionar vEnchanting
 
-acknowledgeDelivery accepts only APPLIED/ALREADY_APPLIED from the authorized consumer after its OWN durable commit. The provider cannot prove another plugin's DB commit by itself; this is the consumer's contract. RETRY, REVIEW and PAYLOAD_CONFLICT are rejected without writes. The receipt and exact payload are rechecked; current attempt/lease and state are checked and CASed atomically. The identical already-ACKED attempt returns ALREADY_ACKED; an old attempt cannot finish a replacement attempt, even if the body/awardId is identical. Expiry before reclaim already rejects the old ack.
+Implementar `EnchantingPurchaseAuthority.verifyConfirmedPurchase(Confirmation)` → `CompletionStage<Verification>`; entrada MAIN y toda consulta/escritura de su ledger asíncrona. Confirmation contiene scope, operationId y deliveryReceiptId; es una clave de consulta, NO una afirmación de éxito.
 
-Keep the SAME original Delivery object in its consume future's completion. Timeout/unknown must never call an award method, regenerate operationId/awardId, replace attribution or select current pets. Lost ack causes a later outbox claim with the same award/payload and a new attempt; vPets recognizes its own committed receipt and returns ALREADY_APPLIED. Retry never means recalculate the award.
+La autoridad debe leer sus recibos durables y devolver:
 
-Zero final XP (cap exhausted) has a complete committed receipt including original capture, but no FINAL_XP outbox or positive Delivery. Token/hash fields belong to plugin coordination; do not publish them to the web/bot as player observation fields.
+- `CONFIRMED` solo cuando cobro válido y mejora real entregada estén confirmados/reconciliados por SU autoridad. Debe devolver la evidencia CANÓNICA original y la Attribution ORIGINAL persistida.
+- `NOT_COMMITTED` para una compra aún no confirmada, `UNKNOWN` si hay incertidumbre o timeout, `REJECTED` para un rechazo definitivo. En esos casos evidencia/atribución son ausentes y no hay concesión.
 
-## vPets ReceiptVerifier adapter handoff (no vPets edit performed)
+Evidencia completa obligatoria: operationId, playerId, scope, sessionId ORIGINAL del proveedor, enchantmentKey registrado, fromTier/toTier reales, mode, vanillaLevelsConsumed REALMENTE consumidos, tariffVersion, contextHash SHA256 de los hechos inmutables de compra, deliveryReceiptId y confirmedAtEpochMillis originales. Además captureId/request/opaqueToken originales completos.
 
-After a genuine runtime service is provided and readiness/integration accepted:
+No fabricar CONFIRMED copiando datos de la solicitud, por un booleano, por disponer de un hash/awardId, por ver ahora un ítem con ese nivel, ni por haber cobrado solo una parte. Un fallo parcial de inventario/pago/callback exige reconciliar su ledger. La API de EcoEnchants no confirma por sí sola la compra durable.
 
-1. Register the existing EnchantingXPConsumer instance through the public provider and retain Access. Do not import DurableEnchantingStore or any implementation class.
-2. Call access.verifyDelivery(originalDelivery) asynchronously.
-3. APPLIED: reconstruct a Delivery from the RETURNED committed receipt fields plus the original attempt which this exact verification checked. Compute vPets' existing XPDigest.delivery from that reconstructed object; return VERIFIED_APPLIED with that vPets fingerprint and the same validated attempt. Do not confuse provider receiptPayloadHash with vPets validatedConsumerPayload. They are different hashes. Do not return a digest of unchecked caller input.
-4. NOT_FOUND/PENDING/UNKNOWN → NOT_COMMITTED (retry same identity). UNAVAILABLE/failed future/timeout → UNAVAILABLE. REJECTED → REJECTED. PAYLOAD_CONFLICT → PAYLOAD_CONFLICT.
-5. Only after consume(originalDelivery) returns APPLIED/ALREADY_APPLIED following vPets' commit, call acknowledgeDelivery on that SAME delivery/attempt. Other results are never success-acks.
-6. Retain the SDK as compileOnly/provided; never shade it or install the API JAR as a plugin. Source/capture schema and consumer version remain 1. Bootstrap/discovery is NOT supplied by this increment; do not invent getProvider APIs or use reflection as a positive adapter.
+EcoSkills compara el retorno con la intención/captura retenida y conserva payload/atribución. Un recibo EcoSkills ya APPLIED se devuelve de forma estable sin volver a calcular modificadores ni depender de una nueva consulta al ledger origen; cambiar deliveryReceiptId para la misma operación es conflicto.
 
-## Real eco writer change
+## Concesión, progreso y cap
 
-`EcoProfile.write` captures/admit-checks a PreparedProfileWrite BEFORE cache mutation. ProfileWriter coalesces captured tasks, preserving origin context; conditional map removal prevents losing a newer task. PersistentDataHandler.write (including loadSerializedProfile) also captures before executor submission. At execution no current session/revision is reconstructed. Jobs captured before a different writer binding fail closed; live bindings cannot be replaced/removed.
+vEnchanting llama grantConfirmedPurchase únicamente con la misma Confirmation, después de su commit legítimo. El proveedor consulta la autoridad real para una operación nueva; no acepta una cantidad de XP del cliente.
 
-The optional ProfileWriteBarrier returns a complete replacement persistence task for owned keys; it must NOT wrap the old serializer's separate transaction. Unowned keys retain native serializer behavior. FencedNativeProfileWriter binds actual typed EcoSkills keys and a reconciled Fence on MAIN. It uses the existing handler's executor, not a second native pool. Its task writes fence + per-key revision/sequence + native scalar value in one store transaction. Out-of-order values are superseded; old session/revision cannot overwrite XP or built-in rewards after a durable award. SQL uncertainty freezes the binding and requests reconciliation, never blind replay.
+Fórmula aprobada: base `3.5 * L^1.5`. Vanilla y vanilla superior usan los niveles Minecraft realmente consumidos. Custom shards/gemas usan `L = 6 * (toTier-fromTier)` y consumo vanilla0. III→IV custom da51.43928459844674 antes de modificadores. Omite el contador enchant_item×3; mantiene skillXPMultiplier legítimo y PlayerSkillXPGainEvent cancelable una vez. No emite EnchantItemEvent sintético ni un segundo PlayerSkillXPReceivedEvent legacy sin correlación para esta compra.
 
-This bridge alone does NOT close the native runtime integration: the real already-initialized MySQL pool still needs a constrained backend binding, and native domain mutations must be queued as WHOLE operations while a grant commits, then loaded caches/holders coherently published before resuming. Throwing on an unavailable/frozen scalar is a fail-closed backstop, not a substitute for that queue. Do not declare ready based on installProfileWriteBarrier, class presence, one guarded SQL call, or H2 tests.
+La intención pasa por CALCULATING con token/lease antes del callback de modificadores. El importe resultante se guarda PREPARED y se reutiliza. Un callback incierto/vencido pasa a REVIEW, sin dispararse otra vez a ciegas. Si falta la sesión original antes de calcular, no se escoge una sesión nueva para inventar su contexto. Una preparación ya calculada puede terminar usando el lease de escritura actual y mantener la atribución original.
 
-An explicit `reconcileUncertainLevelCallbacks(scope, limit<=32)` moves only expired RUNNING LEVEL_EFFECT entries to REVIEW, never claims READY work or executes commands. Built-in native stat/effect rewards remain in the award transaction; do not call handleLevelUp afterward and grant them twice. The callback dispatcher still needs runtime binding and session-aware publication.
+El cap500000 de XP FINAL por jugador/scope/día se aplica después de modificadores. Día UTC y reloj de la BD, según el momento de concesión. Se comprometen juntos el progreso nativo INT/DOUBLE, las recompensas nativas de stats/efectos, revisión, gasto diario, recibo y outbox. Cero por cap produce un recibo completo sin entrega positiva a vPets. No cambian niveles base, multiplicadores, recompensas de skills ni almacenamiento legacy.
 
-## Bounds, storage and acceptance
+La ruta de concesión se serializa por operaciones completas; durante el commit se retienen llamadas nativas completas, no valores absolutos calculados antes. El escritor captura origen antes de cache/coalescer/ejecutor, drena lo pendiente y cerca SQL por sesión/revisión/secuencia. Una escritura atrasada no puede deshacer la concesión. Después del commit se publica una sola vista en la caché y solo se invalidan los holders/stat-icons afectados de ese jugador. Los modificadores decimales y la mecánica de vida sin curación se conservan.
 
-Receipt service: one I/O worker, queue 64 (65 running+queued maximum), one response-deadline timer, default response deadline 5s. A running timed-out job retains its worker slot; queued timed-out jobs are removed. SQL statement timeout 2s; transaction deadline is checked before statements and commit. Acquisition/driver/commit interruption is not guaranteed by those checks. The existing pool/driver must be checked before readiness; no new pool or credential copy is introduced. Close service before pool; shutdown/revocation does not turn a potentially committed operation into a safe new grant.
+La admisión de una MUTACIÓN puede crear el objeto de perfil (sin SQL) y calentar valores usando filas/ausencias conocidas consultadas asíncronamente y defaults nativos registrados. No crea filas por observar ni cambia las APIs de observación: sus llamadas siguen sin cargar perfiles o inventar defaults. Maná, preferencias y datos ajenos a las claves de progreso no son reemplazados por esta publicación.
 
-New draft schema stores original attribution on receipts too (including zero-XP receipts), plus origin ordering metadata in enchanting_writes. The previous draft schema was never migrated on live MySQL. CREATE IF NOT EXISTS is not an upgrade of an existing old draft table: an existing old draft database must be rejected/migrated explicitly before readiness. No real DDL/DML was executed here.
+## Entrega, ack y recuperación
 
-Pending release gates: complete native whole-operation queue + startup/session/transfer ownership + pending-write drain + cache/holder publication; actual initialized MySQL handler binding/timeouts; genuine vEnchanting confirmed-purchase authority; capture-before-checkout durable ordering; typed final dispatcher with no duplicate legacy event; bounded bootstrap/reconnect/transfer recovery; full MySQL/Test two-node/crash acceptance. These are implementation/integration work, not merely unrun tests. Keep provider unavailable and vPets 1.30.0 uninstalled.
+FINAL_XP puede entregarse en otro nodo conservando evidencia, awardId, importe y atribución originales. vPets debe verificar el recibo y el attempt actual por Access.verifyDelivery, y devolver APPLIED/ALREADY_APPLIED solo después de SU commit. El proveedor confirma ese MISMO Delivery/attempt usando acknowledgeDelivery. RETRY/REVIEW/CONFLICT no son ack exitoso. Un intento antiguo/vencido no confirma otro nuevo.
 
-Preserved native API, decimal statistics, mana, rewards/XP legacy bridge, toolchains and foreign source changes. No vPets/vEnchanting source modifications. H2/simulations do not demonstrate physical MySQL crashes, gameplay, active runtime or measured performance.
+El adaptador ReceiptVerifier de vPets reconstruye su fingerprint con los campos DEVUELTOS por la verificación y el attempt que esta comprobó. `receiptPayloadHash` del proveedor NO es `validatedConsumerPayload` de vPets: este último sigue siendo su XPDigest.delivery del payload validado. El SDK consumer1 conserva sus firmas.
+
+Recuperación acotada al iniciar, registrar consumidor, admitir/reconectar/transferir, terminar una publicación y mediante recoverDeliveries explícito (1..32 por tipo). No polling periódico. Callbacks de nivel se reclaman solo para sesiones locales o cuando ya no existe lease original vivo; no se roba trabajo fresco de otro nodo. RUNNING vencido y cálculo incierto pasan a REVIEW. Recompensas de stats/efectos ya están comprometidas; el callback solo notifica PlayerSkillLevelUpEvent y la cadena nativa, sin llamar giveRewards otra vez. No se redirigen callbacks a una sesión nueva. Las operaciones legacy encoladas al retirarse una sesión se señalan para revisión, no se ejecutan contra otra sesión ni se prometen durables: la garantía durable corresponde a compras con recibo.
+
+## Límites y semántica de fallos
+
+MAIN: Bukkit, condiciones/callbacks nativos, captura, publicación y registro. JDBC propio fuera de MAIN. Un worker de concesiones, cola64 y admisión64 que retiene plaza mientras el flujo real siga pendiente; cola nativa hasta64 operaciones completas por perfil y hasta512 perfiles. La persistencia ordinaria de eco conserva su ejecutor/coalescer nativos; no se afirma haber acotado todas las colas legacy de todos los plugins.
+
+Respuesta pública15s, receipt-service5s; statement timeout2s y deadline transaccional comprobado antes de statements/commit. No equivalen a interrumpir físicamente adquisición/driver/commit. Un flujo tardío puede haber comprometido: timeout/UNKNOWN no autoriza otro ID, otra concesión, devolución automática ni otro callback. Consultar el recibo original y repetir solo la misma Confirmation. Una publicación fallida conserva el commit y permite reconciliar la caché en la siguiente admisión, sin recalcular la concesión.
+
+Cierre revoca accesos, impide nuevas admisiones, cierra workers/timers y resuelve respuestas pendientes; debe ocurrir antes del pool de eco. No convierte una operación incierta en rechazo. No se purgan recibos ni se reciclan IDs sin un contrato posterior de retención/replay. Cambios de scope, migración del handler o cambio de reglas requieren coordinación explícita; no se ejecuta un upgrade automático de un esquema draft desconocido.
+
+## API pública de mejora de EcoEnchants
+
+Clase `com.willfp.ecoenchants.api.EnchantUpgradeAPI`, CONTRACT_VERSION1:
+
+- `validateUpgrade(Player, ItemStack, Enchantment, int expectedFrom, int target, LevelPolicy)` → Validation
+- `applyUpgrade(Player, int storageSlot, ItemStack expectedItem, Enchantment, int expectedFrom, int target, LevelPolicy, UUID operationId)` → Result
+
+Ambas MAIN. Ítem único en slot de almacenamiento del jugador, comparación completa de amount/metadatos; el addon debe mantener esa custodia/slot bloqueado durante checkout o adaptar su entrega explícitamente, no mover el ítem a otro inventario suponiendo que esta API lo seguirá. El objeto original se clona; se cambia solamente el encantamiento correspondiente, almacenado correctamente si es libro. Se preservan los demás componentes/PDC/Nexo/enchants. Se vuelve a comprobar el ítem y requisitos después del evento previo.
+
+Reutiliza target/conflictos simétricos, prerrequisitos de otros encantamientos y límites nativos de tipo/cantidad. Al mejorar se excluye solo la instancia anterior del mismo enchant de esa comprobación, evitando contarla como otro enchant. Usa los bloques nativos compilados `has_skill_level` como desbloqueos de compra y exige sus niveles en caché; ausencia no se convierte en0. Las otras condiciones upstream de ACTIVACIÓN (por ejemplo vida baja o agacharse) siguen en sus holders y no se convierten artificialmente en requisitos para comprar. No cambia discovery, catálogo, pagos, precios ni genera XP.
+
+LevelPolicy.NATIVE_MAXIMUM conserva el máximo nativo. VANILLA_ONE_ABOVE admite únicamente un nivel adicional vanilla, nunca aumenta el máximo custom. El addon sigue siendo responsable de autorizar/cobrar esa modalidad según las reglas aprobadas.
+
+Eventos nuevos: EnchantUpgradePrepareEvent cancelable antes de escribir y EnchantUpgradeAppliedEvent después. Incluyen operationId y copias de ítems; se conserva el refresco nativo de holders. Resultados: APPLIED; APPLIED_CALLBACK_REVIEW si el ítem cambió pero falló el callback; UNKNOWN_APPLY_REVIEW si no puede afirmarse el resultado de la escritura; DENIED/ITEM_CHANGED/CANCELLED antes de aplicar. Los dos REVIEW no autorizan reintentar o reembolsar a ciegas. Bukkit gestiona por separado errores de listeners: retornar del dispatch no prueba su commit interno.
+
+operationId en el evento correlaciona la llamada, no es un recibo durable ni deduplica compras. Esta API no almacena la compra ni demuestra cuál operación produjo un ítem que ya tiene ese nivel: vEnchanting debe resolver ese resultado con su ledger/custodia y solo entonces confirmar al proveedor.
+
+## Implementación y aceptación
+
+Implementado en EcoSuite: cola completa, handler MySQL inicializado, fences/flush/publicación/sesiones/recuperación, concesión pública durable y API nativa de mejora. Pendiente FUERA de EcoSuite: autoridad real de vEnchanting y adaptador/bootstrap de vPets; no se tocaron sus fuentes.
+
+Pruebas JVM/H2 y preservación binaria detalladas en manifest.json y test-results; no equivalen a MySQL, Paper real, 60–100 jugadores o verificación de inventario/callbacks en juego. Pendientes de aceptación: MySQL/InnoDB/pool/driver, Test, dos nodos y transferencia real, caída física en cada frontera commit/ack, pago+ítem reales, metadatos Nexo, condiciones/holders/eventos en servidor y carga. No se instaló ni ejecutó lifecycle. vPets1.30.0 sigue sin instalar. Artefactos/hashes en SHA256SUMS; cambios ajenos y runtime original se preservan mediante composición explícita y verificación de miembros/ABI.
+
+## Bootstrap y evidencia final
+Registrar autoridad y consumidor al aparecer el servicio aunque readiness aún indique consumer_missing/source_missing. Condicionar solo la compra a readiness; esperar ready antes de registrar crea un bloqueo circular.
+SDK compileOnly/provided; resolver dependencias normales Paper/Adventure/Guava/anotaciones. La muestra pública Java compila y el consumidor vPets4781ed1 enlaza sin construcción ni ejecución.
+190 pruebas JVM/H2/simuladas sin fallos: EcoSkills109, eco-api37, eco-native6, EcoEnchants38. Pendientes MySQL real, Paper/Test, transferencia real, inventario/callbacks y carga60–100. No instalados ni lifecycle ni SQL real. Artefactos/hashes en manifest.json y SHA256SUMS de runtime-20261015.

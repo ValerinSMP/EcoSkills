@@ -1,26 +1,9 @@
-# XP durable — recibo público e integración de origen (2026-10-15)
+# Runtime durable XP — entrega 2026-10-15
 
-- Implementados EnchantingXPProvider v1: registro/retirada del consumidor autorizado, lookupReceipt, verifyDelivery y acknowledgeDelivery asíncronos, evidencia reconstruida, comparación completa e intento vigente/lease/CAS. SDK consumer v1 preservado; APPLIED/ALREADY solo se aceptan como compromiso durable del consumidor. Timeout no vuelve a conceder ni cambia identidad.
-- eco captura PreparedProfileWrite antes de la caché y conserva contexto a través del coalescer/ejecutor. FencedNativeProfileWriter conecta esa ruta con la transacción del store, revisión/sesión y secuencia por clave. Prueba usa handler real y tablas escalares H2; no MySQL/Paper. Reconciliación acotada de LEVEL_EFFECT incierto → REVIEW sin ejecutar premios.
-- NO proveedor runtime completo: faltan cola de operaciones nativas completas/publicación coherente de caché/holders, acceso acotado al handler MySQL ya inicializado, bootstrap/sesiones/recovery y autoridad genuina de compra vEnchanting. No registrar ni indicar ready; no basta instalar el interceptor. Son pendientes de implementación, además de la aceptación MySQL/Test.
-- Compilado en personal, ejecutor limitado, JDK25/release21. EcoSkills95 + eco-api37 pruebas; 0fallos/errores/omisiones. 17nuevas respecto de82+33; además compilación core-plugin Kotlin de eco. ABI: 10clases previas SDK draft2 idénticas byte a byte. No prueba de rendimiento, consumidor real ni MySQL/Test.
-- Entrega artifacts/eco-suite/provider-20261015; API c64658f437003e4f71a3ef9eb105f8f4be6bb7ad1d17d5873b8b7c5008e58f8d; desarrollo EcoSkills ff664decd918b3727178ea34fdb9b9e58ea0ea49edd814dbf8ec0465543c04f6; desarrollo eco 1cfaaf8deab44972f4c62d3d44526800a63a14abb347325305af1bbcf1d76f53. Bibliotecas sin plugin.yml; NO instalables. No hay JAR runtime completo de compras listo.
-- No instalación, lifecycle ni DDL/DML real. EcoSkills instalado Custom/Sync/Test conserva 1ad3d552…; vPets1.29.1 instalado conserva832b7f16… y candidato1.30.0 permanece fuera. vPets/vEnchanting fuentes sin editar. Cambios ajenos preservados.
-- Contrato y handoff: docs/ENCHANTING-PROVIDER-CONTRACT.md. No exponer token de captura ni hash de coordinación en observaciones web. Pendientes y límites explícitos; contratos anteriores son históricos cuando discrepan con este estado.
-
-# Núcleo durable de mesa — 2026-10-15, sin conexión runtime
-
-- Implementados store JDBC transaccional de recibo/progreso nativo/cap/outbox, adapter INT/DOUBLE y contrato público de captura/consumo para vPets. Lease/revisión y comparación previenen escrituras antiguas en la primitiva; pendiente conectar cada writer nativo de eco antes de habilitar. Fuente/cambios ajenos intactos.
-- Compilado en personal limitado/JDK25/release21. 82tests pasaron,16nuevos H2/contrato; no son MySQL real, dos Minecraft ni implementación vPets. Ver docs/ENCHANTING-DURABLE-STATE.md para artefactos/hashes y límites.
-- FINAL_XP reenvía mismo awardId/evidencia/captura; LEVEL_EFFECT incierto pasaREVIEW para no duplicar callbacks externos. Recompensas nativas modeladas en la transacción de claves. Handoff vPets docs/VPETS-DURABLE-XP-HANDOFF.md; sin mensajes entre chats ni edición del consumidor.
-- No proveedor público de concesión habilitado, no instalación/SQL real/lifecycle. Pendientes escritor/fences/cache/handler inicializado, sesiones reales, consumidor/confirmación genuina/XP final y level_missing. No presentar el núcleo aislado como protección del runtime ni tarea completa.
-
-# Incremento preliminar de XP de mesa — 2026-10-15
-
-- Añadidos tipos públicos puros de evidencia/hash/identidad estable, fórmula3,5×L^1,5 y diagnóstico cache-only con motivo. Ninguna mutación de XP, fachada, fuente ajena, vEnchanting o vPets modificada.
-- Compilado personal/ejecutor limitado/JDK25/release21 con Maven observation-20261013. 66tests pasaron,10nuevos. Contrato preliminar compileOnly y hash en docs/ENCHANTING-PURCHASE-XP.md; no es proveedor de concesión.
-- Pendientes: resolver semántica de notificación tras crash con propietario, proveedor durable/atomicidad/progreso/cap/fences/outbox e integración real. No afirmar idempotencia durable ni corrección runtime de level_missing. Sin instalación, SQL o lifecycle; Custom/Sync intactos.
-- Estado anterior y cambios ajenos a continuación preservados; commit solo de esta sección y archivos nuevos propios.
+- Fuente canónica personal. Cola nativa/handler MySQL/publicación/sesiones/recuperación y API implementados; contratos en docs.
+- Personal limitado JDK25/release21. Validación conjunta190 tests JVM/H2/simulados sin fallos. Java público compila y vPets4781ed1 enlaza sin ejecutarse.
+- Runtime y SDK/hashes en runtime-20261015. No instalado/activo/gameplay ni lifecycle/SQL real. Default apagado.
+- Pendientes adaptadores externos y aceptación MySQL/Paper/Test/transferencia/carga. Cambios ajenos preservados/excluidos; vPets1.30.0 sigue fuera.
 
 # Estado actual 2026-10-13 — API de observación EcoSkills
 

@@ -256,7 +256,10 @@ class Skill(
 
     internal fun handleLevelUp(player: OfflinePlayer, level: Int) {
         giveRewards(player, level)
+        notifyLevelUpEffects(player, level)
+    }
 
+    internal fun notifyLevelUpEffects(player: OfflinePlayer, level: Int) {
         if (player is Player) {
             // I don't really know a way to clean this up
             levelUpEffects?.trigger(
@@ -273,6 +276,17 @@ class Skill(
                     addPlaceholder(NamedValue("previous_level_numeral", (level - 1).toNumeral()))
                 }
             )
+        }
+    }
+
+    internal fun durableRewardRules(): Map<Int, List<com.willfp.ecoskills.enchanting.persistence.JdbcNativeEnchantingGateway.Reward>> {
+        require(maxLevel in 1..1024) { "Durable native level projection is bounded to 1024" }
+        return (1..maxLevel).associateWith { level ->
+            rewards.mapNotNull { reward ->
+                val increment = reward.getCumulativeLevels(level) - reward.getCumulativeLevels(level - 1)
+                if (increment == 0) null else com.willfp.ecoskills.enchanting.persistence.JdbcNativeEnchantingGateway.Reward(
+                    reward.reward.getObservationKey().key.toString(), reward.reward.startLevel, increment)
+            }
         }
     }
 

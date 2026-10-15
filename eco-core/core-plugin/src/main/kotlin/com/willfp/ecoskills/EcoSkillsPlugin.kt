@@ -110,6 +110,7 @@ class EcoSkillsPlugin : LibreforgePlugin() {
     }
 
     override fun handleEnable() {
+        com.willfp.ecoskills.enchanting.EnchantingRuntime.enable(this)
         com.willfp.libreforge.registerHolderProvider(com.willfp.ecoskills.stats.StatHolderProvider)
 
         if (this.configYml.getBool("leaderboard.enabled")) {
@@ -120,6 +121,7 @@ class EcoSkillsPlugin : LibreforgePlugin() {
     }
 
     override fun handleReload() {
+        com.willfp.ecoskills.enchanting.EnchantingRuntime.reload()
         // One provider-local refresh on an explicit reload, not a global/polling invalidation.
         org.bukkit.Bukkit.getOnlinePlayers().forEach {
             com.willfp.ecoskills.stats.invalidateModifiedStats(it, Stats.values().toSet())
@@ -133,6 +135,8 @@ class EcoSkillsPlugin : LibreforgePlugin() {
         GainXPDisplay.startTickingSounds()
         LevelUpDisplay.startTickingSounds()
     }
+
+    override fun handleDisable() { com.willfp.ecoskills.enchanting.EnchantingRuntime.disable(this) }
 
     override fun loadPluginCommands(): List<PluginCommand> {
         return listOf(
