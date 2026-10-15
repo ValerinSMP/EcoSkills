@@ -25,12 +25,28 @@ import org.bukkit.event.player.PlayerJoinEvent
 import org.bukkit.event.player.PlayerQuitEvent
 import org.bukkit.plugin.ServicePriority
 import java.util.UUID
+import java.util.logging.Level
+import com.willfp.eco.core.LifecyclePosition
 
 /** Lifecycle is configuration-gated; no API/class presence creates a source confirmation. */
 object EnchantingRuntime : Listener {
     private var provider: DurableRuntimeProvider? = null
+    private var startup: RuntimeStartup? = null
+
     @JvmStatic fun enable(plugin: EcoSkillsPlugin) {
-        runCatching { enableConfigured(plugin) }.onFailure { plugin.logger.severe("Durable XP configuration unavailable: ${it.javaClass.simpleName}") }
+        if (startup != null) return
+        val gate = RuntimeStartup(
+            { task -> plugin.afterLoad(task) },
+            { task -> plugin.onReload(LifecyclePosition.END, task) },
+            { plugin.isEnabled },
+            {
+                plugin.logger.info("Durable XP startup: native afterLoad and both startup reloads completed; checking categories and MySQL handler")
+                enableConfigured(plugin)
+            },
+            { failure -> plugin.logger.log(Level.SEVERE, "Durable XP configuration unavailable: ${failure.message}", failure) }
+        )
+        startup = gate
+        gate.arm()
     }
     private fun enableConfigured(plugin: EcoSkillsPlugin) {
         if (!plugin.configYml.getBool("enchanting-purchase-xp.enabled")) return
@@ -40,9 +56,9 @@ object EnchantingRuntime : Listener {
         val skill = Skills.getByID("enchanting") ?: error("Native enchanting skill absent")
         val access = Eco.get().profileMutationAccess ?: error("eco mutation capability absent")
         require(access.supported()) { "Durable XP requires the initialized native MySQL handler" }
-        require(skill.maxLevel in 1..1024)
+        require(skill.maxLevel in 1..1024) { "Native enchanting max level must be in 1..1024: ${skill.maxLevel}" }
         val requirements = DoubleArray(skill.maxLevel) { skill.getXPRequired(it) }
-        require(requirements.all { it.isFinite() && it > 0 })
+        require(requirements.all { it.isFinite() && it > 0 }) { "Native enchanting XP requirements must be positive and finite" }
         val rewardRules = skill.durableRewardRules()
         val keys = LinkedHashMap<PersistentDataKey<*>, Class<out Number>>()
         for (nativeSkill in Skills.values()) {
@@ -99,12 +115,20 @@ object EnchantingRuntime : Listener {
         provider = runtime
         Bukkit.getPluginManager().registerEvents(this,plugin)
         runtime.initialize().whenComplete { _, failure ->
-            if (failure != null) plugin.logger.severe("Durable XP backend initialization failed; provider remains unavailable: ${failure.javaClass.simpleName}")
-            else host.executeMain { Bukkit.getServicesManager().register(EnchantingXPProvider::class.java,runtime,plugin,ServicePriority.Normal) }
+            if (provider !== runtime || !plugin.isEnabled) return@whenComplete
+            if (failure != null) plugin.logger.log(Level.SEVERE, "Durable XP backend initialization failed; provider remains unavailable: ${failure.message}", failure)
+            else runCatching {
+                host.executeMain {
+                    if (provider === runtime && plugin.isEnabled) {
+                        Bukkit.getServicesManager().register(EnchantingXPProvider::class.java,runtime,plugin,ServicePriority.Normal)
+                        plugin.logger.info("Durable XP provider registered after categories and native MySQL writer initialization")
+                    }
+                }
+            }.onFailure { plugin.logger.log(Level.SEVERE, "Durable XP service registration failed: ${it.message}", it) }
         }
     }
     @JvmStatic fun reload() { provider?.configurationChanged() }
-    @JvmStatic fun disable(plugin: EcoSkillsPlugin) { provider?.let { Bukkit.getServicesManager().unregister(EnchantingXPProvider::class.java,it); it.close() }; provider = null }
+    @JvmStatic fun disable(plugin: EcoSkillsPlugin) { startup?.close(); startup = null; provider?.let { Bukkit.getServicesManager().unregister(EnchantingXPProvider::class.java,it); it.close() }; provider = null }
     @EventHandler fun participantDisabled(event: org.bukkit.event.server.PluginDisableEvent) { provider?.participantDisabled(event.plugin) }
     @EventHandler(priority = EventPriority.LOWEST) fun join(event: PlayerJoinEvent) { provider?.joined(event.player.uniqueId) }
     @EventHandler(priority = EventPriority.MONITOR) fun quit(event: PlayerQuitEvent) { provider?.retire(event.player.uniqueId) }

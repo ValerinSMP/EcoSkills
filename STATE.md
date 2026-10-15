@@ -1,3 +1,10 @@
+# Corrección de arranque durable XP — 2026-10-15
+
+- Canónica personal. EnchantingRuntime arma inicio único en afterLoad + onReload END; espera categorías y handler real, sin timer cancelable. Mensaje/stack/causas completos; evita registro tardío tras baja. API pública y mecanismo durable sin cambios.
+-114 pruebas EcoSkills sin fallos;5 nuevas de orden/duplicado/cierre/fallo. Bytecode instalado y logs contrastados; evidencia docs/DURABLE-XP-STARTUP.md.
+- JDK25/release21, build limitado personal. Candidato/hash en startup-fix-20261015. No instalado/activo/gameplay; no lifecycle/SQL real.
+- Pendiente arranque real Test y registro/compra después de instalación/activación autorizada por separado. Cambios ajenos intactos/excluidos.
+
 # Runtime durable XP — entrega 2026-10-15
 
 - Fuente canónica personal. Cola nativa/handler MySQL/publicación/sesiones/recuperación y API implementados; contratos en docs.
