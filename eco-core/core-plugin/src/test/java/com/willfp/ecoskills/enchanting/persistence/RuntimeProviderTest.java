@@ -17,6 +17,12 @@ class RuntimeProviderTest {
     final ExecutorService main=Executors.newSingleThreadExecutor(r->new Thread(r,"simulated-Paper-main"));
     final AtomicReference<Thread> mainThread=new AtomicReference<>();
     final DurableEnchantingStoreTest.Time clock=new DurableEnchantingStoreTest.Time();
+    final AtomicReference<CompletableFuture<EnchantingPurchaseAuthority.Verification>> proofGate=new AtomicReference<>();
+    final AtomicReference<CountDownLatch> clockReadSignal=new AtomicReference<>();
+    final AtomicLong nanos=new AtomicLong();
+    final AtomicBoolean online=new AtomicBoolean(true);
+    final AtomicReference<CompletableFuture<Void>> flushGate=new AtomicReference<>();
+    final AtomicInteger flushes=new AtomicInteger();
     final AtomicInteger modifiers=new AtomicInteger(),captures=new AtomicInteger(),grants=new AtomicInteger();
     final AtomicBoolean failModifier=new AtomicBoolean(),queueExtraXP=new AtomicBoolean(),failPublication=new AtomicBoolean();
     final ConcurrentMap<String,Number> cache=new ConcurrentHashMap<>();
@@ -39,7 +45,7 @@ class RuntimeProviderTest {
         ProfileMutationAccess mutation=new ProfileMutationAccess(){
             public boolean supported(){return true;}
             public void install(Factory factory){assertSame(mainThread.get(),Thread.currentThread());writer.installProfileWriteBarrier(factory.create(pool,"eco_"));}
-            public CompletionStage<Void>flush(UUID p){assertSame(mainThread.get(),Thread.currentThread());return writer.awaitProfileWrites(p);}
+            public CompletionStage<Void>flush(UUID p){assertSame(mainThread.get(),Thread.currentThread());flushes.incrementAndGet();var gate=flushGate.get();return gate==null?writer.awaitProfileWrites(p):gate.thenCompose(v->writer.awaitProfileWrites(p));}
             public CompletionStage<Void>flushAll(){return writer.awaitProfileWrites(null);}
             public boolean publish(UUID p,Set<PersistentDataKey<?>>owned,Map<PersistentDataKey<?>,Object> values){assertSame(mainThread.get(),Thread.currentThread());cache.clear();values.forEach((k,v)->cache.put(k.getKey().toString(),(Number)v));return true;}
         };
@@ -48,7 +54,8 @@ class RuntimeProviderTest {
             public void executeMain(Runnable task){if(isMain())task.run();else main.execute(task);}
             public ProfileMutationAccess access(){return mutation;}
             public Plugin purchaseOwner(){return sourceOwner;}public Plugin consumerOwner(){return consumerOwner;}
-            public boolean online(UUID p){return player.equals(p);}public Collection<UUID>onlinePlayers(){return List.of();}
+            public long monotonicNanos(){var signal=clockReadSignal.get();if(signal!=null)signal.countDown();return nanos.get();}
+            public boolean online(UUID p){return online.get()&&player.equals(p);}public Collection<UUID>onlinePlayers(){return List.of();}
             public JdbcNativeEnchantingGateway gateway(String prefix){return gateway;}
             public DurableEnchantingStore createStore(DataSource p,String prefix){store=new DurableEnchantingStore(p,prefix,clock,gateway);return store;}
             public Map<PersistentDataKey<?>,Class<? extends Number>>keys(){return Map.of(xp,Double.class,level,Integer.class,reward,Integer.class);}
@@ -70,7 +77,7 @@ class RuntimeProviderTest {
             };
             access=provider.registerConsumer(consumerOwner,consumer);
             assertFalse(provider.readiness().ready());
-            provider.registerPurchaseAuthority(sourceOwner,confirmation->CompletableFuture.completedStage(confirmations.getOrDefault(confirmation.operationId(),new EnchantingPurchaseAuthority.Verification(EnchantingPurchaseAuthority.State.NOT_COMMITTED,null,null,"not_confirmed"))));
+            provider.registerPurchaseAuthority(sourceOwner,confirmation->proofGate.get()!=null?proofGate.get():CompletableFuture.completedStage(confirmations.getOrDefault(confirmation.operationId(),new EnchantingPurchaseAuthority.Verification(EnchantingPurchaseAuthority.State.NOT_COMMITTED,null,null,"not_confirmed"))));
             assertTrue(provider.readiness().ready());return null;
         });
     }
@@ -125,5 +132,92 @@ class RuntimeProviderTest {
         main(()->{assertTrue(NativeOperationQueue.defer(player,resumed::incrementAndGet));return null;});
         await(main(()->provider.admit(player)));assertEquals(1,resumed.get());
         assertEquals(EnchantingXPProvider.State.APPLIED,await(main(()->provider.grantConfirmedPurchase(sourceOwner,confirmation))).state());assertEquals(1,modifiers.get());
+    }
+
+    void advance(long millis){clock.now.addAndGet(millis);nanos.addAndGet(TimeUnit.MILLISECONDS.toNanos(millis));}
+    @Test void twentySecondExpiryIsReadmittedBeforeCaptureWithoutChangingSession()throws Exception {
+        var original=main(()->provider.session(player).orElseThrow());int before=flushes.get();
+        advance(19999);assertTrue(main(()->provider.session(player).isPresent()));advance(1);
+        assertTrue(main(()->provider.readiness().ready()));assertTrue(main(()->provider.session(player).isEmpty()));
+        var capture=await(main(()->provider.preparePurchase(sourceOwner,player,UUID.randomUUID())));
+        assertEquals(original.originalSession(),capture.request().originalSession());
+        assertEquals(before+1,flushes.get());assertTrue(main(()->provider.session(player).isPresent()));
+        assertEquals(0,modifiers.get());assertEquals(0,grants.get());
+    }
+    @Test void expiredSqlLeaseAfterSixtyThreeSecondsIsReacquiredBeforeCapture()throws Exception {
+        var original=main(()->provider.session(player).orElseThrow());advance(63000);
+        assertTrue(main(()->provider.session(player).isEmpty()));
+        var capture=await(main(()->provider.preparePurchase(sourceOwner,player,UUID.randomUUID())));
+        assertEquals(original.originalSession(),capture.request().originalSession());
+        assertTrue(main(()->provider.session(player).isPresent()));assertEquals(1,captures.get());
+    }
+    @Test void competingUnexpiredSqlLeaseBlocksCaptureAndNeverGrants()throws Exception {
+        advance(63000);UUID other=UUID.randomUUID();assertNotNull(store.acquire("survival",player,other,60000));
+        assertThrows(ExecutionException.class,()->await(main(()->provider.preparePurchase(sourceOwner,player,UUID.randomUUID()))));
+        assertTrue(main(()->provider.session(player).isEmpty()));assertEquals(0,captures.get());assertEquals(0,modifiers.get());assertEquals(0,grants.get());
+    }
+    @Test void lateJoinAfterInitializationThenIdlePurchaseUsesThatSession()throws Exception {
+        main(()->{online.set(false);provider.retire(player);return null;});
+        advance(63000);
+        await(main(()->{online.set(true);provider.joined(player);return provider.admit(player);}));
+        var joined=main(()->provider.session(player).orElseThrow());advance(63000);
+        var capture=await(main(()->provider.preparePurchase(sourceOwner,player,UUID.randomUUID())));
+        assertEquals(joined.originalSession(),capture.request().originalSession());assertEquals(1,captures.get());
+    }
+    @Test void pendingReadmissionIsCoalescedAndCannotCaptureUntilPublication()throws Exception {
+        advance(21000);var gate=new CompletableFuture<Void>();flushGate.set(gate);int before=flushes.get();
+        var first=main(()->provider.preparePurchase(sourceOwner,player,UUID.randomUUID()));
+        // Barrier: submit admission explicitly so this test need not sleep for the SQL intent lookup.
+        var pendingAdmission=main(()->provider.admit(player));
+        var secondAdmission=main(()->provider.admit(player));assertSame(pendingAdmission,secondAdmission);
+        assertEquals(before+1,flushes.get());assertEquals(0,captures.get());assertFalse(first.toCompletableFuture().isDone());
+        flushGate.set(null);gate.complete(null);await(pendingAdmission);await(first);assertEquals(1,captures.get());
+    }
+    @Test void disconnectDuringReadmissionCannotCaptureOrResurrectSession()throws Exception {
+        advance(21000);var gate=new CompletableFuture<Void>();flushGate.set(gate);
+        var pending=main(()->provider.preparePurchase(sourceOwner,player,UUID.randomUUID()));
+        main(()->provider.admit(player));
+        main(()->{online.set(false);provider.retire(player);return null;});
+        flushGate.set(null);gate.complete(null);
+        assertThrows(ExecutionException.class,()->await(pending));
+        assertTrue(main(()->provider.session(player).isEmpty()));assertEquals(0,captures.get());
+    }
+    @Test void obsoleteAdmissionCannotRemoveOrThawNewSessionAdmission()throws Exception {
+        advance(21000);var oldGate=new CompletableFuture<Void>();flushGate.set(oldGate);
+        var oldAdmission=main(()->provider.admit(player));
+        // Retire schedules old-session release before the independent new admission.
+        main(()->{flushGate.set(null);provider.retire(player);return null;});
+        var newGate=new CompletableFuture<Void>();flushGate.set(newGate);
+        var newAdmission=main(()->provider.admit(player));
+        oldGate.complete(null);
+        assertThrows(ExecutionException.class,()->await(oldAdmission));
+        assertSame(newAdmission,main(()->provider.admit(player)));
+        assertTrue(main(()->provider.session(player).isEmpty()));
+        flushGate.set(null);newGate.complete(null);await(newAdmission);
+        assertTrue(main(()->provider.session(player).isPresent()));
+    }
+    @Test void retryAfterIdleAndReconnectRetainsOriginalCaptureAndAward()throws Exception {
+        var confirmation=purchase(UUID.randomUUID());
+        var original=await(main(()->provider.preparePurchase(sourceOwner,player,confirmation.operationId())));
+        var first=await(main(()->provider.grantConfirmedPurchase(sourceOwner,confirmation)));
+        assertEquals(EnchantingXPProvider.State.APPLIED,first.state());
+        advance(63000);main(()->{provider.retire(player);return null;});await(main(()->provider.admit(player)));
+        assertNotEquals(original.request().originalSession(),main(()->provider.session(player).orElseThrow().originalSession()));
+        assertEquals(original,await(main(()->provider.preparePurchase(sourceOwner,player,confirmation.operationId()))));
+        assertEquals(first,await(main(()->provider.grantConfirmedPurchase(sourceOwner,confirmation))));
+        assertEquals(1,captures.get());assertEquals(1,modifiers.get());assertEquals(original,first.receipt().originalAttribution());
+    }
+
+    @Test void expiredPurchasePreparationWaitsForInFlightNativeGrantInsteadOfRebindingItsCache()throws Exception {
+        var confirmation=purchase(UUID.randomUUID());var proof=new CompletableFuture<EnchantingPurchaseAuthority.Verification>();proofGate.set(proof);
+        var grant=main(()->provider.grantConfirmedPurchase(sourceOwner,confirmation));advance(21000);
+        int before=flushes.get();var reachedExpiryCheck=new CountDownLatch(1);clockReadSignal.set(reachedExpiryCheck);
+        var capture=main(()->provider.preparePurchase(sourceOwner,player,UUID.randomUUID()));
+        assertTrue(reachedExpiryCheck.await(8,TimeUnit.SECONDS));main(()->null);clockReadSignal.set(null);
+        assertEquals(before,flushes.get()); // No rebind while the earlier grant owns its pipeline.
+        assertFalse(grant.toCompletableFuture().isDone());assertFalse(capture.toCompletableFuture().isDone());assertEquals(1,captures.get());
+        proof.complete(confirmations.get(confirmation.operationId()));
+        assertEquals(EnchantingXPProvider.State.APPLIED,await(grant).state());await(capture);
+        assertEquals(2,captures.get());assertEquals(1,modifiers.get());
     }
 }

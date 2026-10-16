@@ -47,7 +47,7 @@ No se expone SQL, pool ni Connection por el proveedor o su SDK. `ProfileMutation
 ## Antes de checkout: atribución original durable
 
 1. El cliente obtiene el servicio y comprueba readiness; ninguna respuesta ausente significa nivel0 o compra autorizada.
-2. Crea una sola operationId para esa operación y llama preparePurchase ANTES de cobrar o aplicar el encantamiento.
+2. Crea una sola operationId para esa operación y llama preparePurchase ANTES de cobrar o aplicar el encantamiento. No usar session(UUID) como precondición de disponibilidad: es un snapshot estricto que puede estar vacío tras20s. preparePurchase readmite/reconcilia de forma asíncrona si hace falta y devuelve la Attribution durable; esperar su éxito antes de cobrar. Una compra nueva exige jugador online y misma sesión a través de la admisión. Una operación ya capturada o con intent durable conserva la atribución original al reenviar, no adopta la mascota/sesión actual.
 3. EcoSkills retiene durablemente la intención y su sesión original ANTES de invocar capture. El consumidor captura en MAIN y persiste su contexto propio asíncronamente; el proveedor conserva captureId/request/token después de su confirmación.
 4. Solo completar esa preparación permite comenzar checkout. Ante timeout, repetir con la MISMA operationId. La intención y captura anteriores se recuperan sin escoger una mascota/sesión nueva, incluso tras reconectar.
 5. vEnchanting guarda la Attribution recibida junto a la operación. Sus campos no son prueba del pago ni del ítem entregado.
@@ -126,3 +126,9 @@ Pruebas JVM/H2 y preservación binaria detalladas en manifest.json y test-result
 Registrar autoridad y consumidor al aparecer el servicio aunque readiness aún indique consumer_missing/source_missing. Condicionar solo la compra a readiness; esperar ready antes de registrar crea un bloqueo circular.
 SDK compileOnly/provided; resolver dependencias normales Paper/Adventure/Guava/anotaciones. La muestra pública Java compila y el consumidor vPets4781ed1 enlaza sin construcción ni ejecución.
 190 pruebas JVM/H2/simuladas sin fallos: EcoSkills109, eco-api37, eco-native6, EcoEnchants38. Pendientes MySQL real, Paper/Test, transferencia real, inventario/callbacks y carga60–100. No instalados ni lifecycle ni SQL real. Artefactos/hashes en manifest.json y SHA256SUMS de runtime-20261015.
+
+## Admisión individual — corrección 2026-10-16
+
+session(UUID) sigue siendo cache-only, sin efectos secundarios, y Optional.empty NO equivale a proveedor global caído. La ventana local20s y lease SQL60s se mantienen. preparePurchase usa las APIs existentes para esperar flush/admisión SQL/snapshot/publicación y un fence válido antes de capturar. Readmisiones simultáneas se agrupan; una captura nueva con sesión cambiada o jugador offline se rechaza. Si hay un grant nativo en curso, la readmisión de compra espera su pipeline para no sobrescribir su publicación. Una finalización vieja no retira ni descongela la admisión de una sesión nueva.
+
+Timeout/error de admisión no autoriza pago ni otra operationId; el intento y la captura durable existentes conservan su identidad. No se repiten escrituras de concesión por caducar readiness. Sin polling ni TTL ampliado. Los fallos de admisión incluyen epoch/estado local/fenceRevision y causa. El comportamiento requiere adaptar la preconsulta bloqueante de vEnchanting en su chat. Ver PLAYER-SESSION-HANDOFF.md.

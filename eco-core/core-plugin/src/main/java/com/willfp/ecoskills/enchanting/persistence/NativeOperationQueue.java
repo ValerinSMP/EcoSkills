@@ -8,9 +8,11 @@ public final class NativeOperationQueue {
     private final Map<UUID,State> states=new HashMap<>();
     private final Consumer<UUID> admission;
     private final BiConsumer<UUID,String> review;
+    private final LongSupplier nanoClock;
     private boolean closed;
     private static final class State { boolean frozen=true,requested;long epoch,validUntil;final ArrayDeque<Runnable> operations=new ArrayDeque<>(); }
-    public NativeOperationQueue(Consumer<UUID> admission,BiConsumer<UUID,String> review){this.admission=admission;this.review=review;}
+    public NativeOperationQueue(Consumer<UUID> admission,BiConsumer<UUID,String> review){this(admission,review,System::nanoTime);}
+    NativeOperationQueue(Consumer<UUID> admission,BiConsumer<UUID,String> review,LongSupplier nanoClock){this.admission=admission;this.review=review;this.nanoClock=nanoClock;}
     public void install(){main();if(installed!=null)throw new IllegalStateException("Native queue already installed");installed=this;}
     private void main(){if(Thread.currentThread()!=main)throw new IllegalStateException("Native operations require MAIN");}
     public static boolean active(){return installed!=null;}
@@ -19,7 +21,7 @@ public final class NativeOperationQueue {
         main();if(closed)throw new IllegalStateException("Native queue closed");
         var state=states.get(player);
         if(state==null){if(states.size()>=512)throw new IllegalStateException("Native session capacity");state=new State();states.put(player,state);}
-        if(!state.frozen&&System.nanoTime()<state.validUntil)return false;
+        if(!state.frozen&&nanoClock.getAsLong()<state.validUntil)return false;
         state.frozen=true;
         if(state.operations.size()>=64)throw new IllegalStateException("Native operation queue full; retry original request");
         state.operations.add(Objects.requireNonNull(operation));
@@ -28,14 +30,15 @@ public final class NativeOperationQueue {
     public long freeze(UUID player){main();var state=states.computeIfAbsent(player,id->new State());state.frozen=true;state.requested=true;return ++state.epoch;}
     public void resume(UUID player,long epoch){
         main();var state=states.get(player);if(state==null||state.epoch!=epoch||closed)return;
-        state.frozen=false;state.requested=false;state.validUntil=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(20);
+        state.frozen=false;state.requested=false;state.validUntil=nanoClock.getAsLong()+java.util.concurrent.TimeUnit.SECONDS.toNanos(20);
         while(!state.frozen&&!state.operations.isEmpty()) {
             var operation=state.operations.removeFirst(); // Dequeue BEFORE execution; never repeat an uncertain callback.
             try{operation.run();}catch(RuntimeException failure){state.frozen=true;state.requested=true;review.accept(player,"native_operation_uncertain");break;}
         }
     }
     public List<UUID> pendingPlayers(){main();return List.copyOf(states.keySet());}
-    public boolean ready(UUID player){main();var state=states.get(player);return state!=null&&!state.frozen&&System.nanoTime()<state.validUntil;}
+    public boolean ready(UUID player){main();var state=states.get(player);return state!=null&&!state.frozen&&nanoClock.getAsLong()<state.validUntil;}
+    String diagnostic(UUID player){main();var state=states.get(player);return state==null?"queue=absent":"epoch="+state.epoch+",frozen="+state.frozen+",requested="+state.requested+",ready="+ready(player);}
     public void retryAdmission(UUID player){main();var state=states.get(player);if(state!=null)state.requested=false;}
     public void retire(UUID player){main();var state=states.remove(player);if(state!=null&&!state.operations.isEmpty())review.accept(player,"session_retired_with_queued_operations:"+state.operations.size());}
     public void close(){main();closed=true;for(var id:List.copyOf(states.keySet()))retire(id);if(installed==this)installed=null;}

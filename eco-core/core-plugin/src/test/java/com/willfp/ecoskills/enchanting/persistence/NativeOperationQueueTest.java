@@ -18,4 +18,14 @@ class NativeOperationQueueTest {
   var q=new NativeOperationQueue(p->{},(p,why)->{});q.install();
   try{q.freeze(id);map.giveXP(skill,1.0);org.mockito.Mockito.verifyNoInteractions(skill);}finally{q.close();}
  }
+
+ @Test void monotonicExpiryDoesNotInventReadinessAndOnlyRealResumeRenewsIt(){
+  UUID player=UUID.randomUUID();var nanos=new AtomicLong();var admissions=new AtomicInteger();
+  var q=new NativeOperationQueue(id->admissions.incrementAndGet(),(id,why)->{},nanos::get);
+  long epoch=q.freeze(player);q.resume(player,epoch);
+  nanos.set(java.util.concurrent.TimeUnit.SECONDS.toNanos(20)-1);assertTrue(q.ready(player));
+  nanos.incrementAndGet();assertFalse(q.ready(player));assertEquals(0,admissions.get());
+  long renewal=q.freeze(player);q.resume(player,epoch);assertFalse(q.ready(player));
+  q.resume(player,renewal);assertTrue(q.ready(player));q.close();
+ }
 }

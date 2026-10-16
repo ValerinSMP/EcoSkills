@@ -16,6 +16,7 @@ import static com.willfp.ecoskills.enchanting.persistence.DurableEnchantingStore
 public final class DurableRuntimeProvider implements EnchantingXPProvider,AutoCloseable {
     public interface Host {
         boolean isMain();void executeMain(Runnable task);
+        default long monotonicNanos(){return System.nanoTime();}
         ProfileMutationAccess access();
         default DurableEnchantingStore createStore(javax.sql.DataSource pool,String prefix){return new DurableEnchantingStore(pool,prefix,gateway(prefix));}
         Plugin purchaseOwner();Plugin consumerOwner();
@@ -48,7 +49,7 @@ public final class DurableRuntimeProvider implements EnchantingXPProvider,AutoCl
         this.host=Objects.requireNonNull(host);this.scope=scope;new ReceiptKey(scope,UUID.randomUUID(),UUID.randomUUID());main();
         io=new ThreadPoolExecutor(1,1,0,TimeUnit.MILLISECONDS,new ArrayBlockingQueue<>(64),r->{var t=new Thread(r,"EcoSkills-awards-io");t.setDaemon(true);return t;},new ThreadPoolExecutor.AbortPolicy());
         timers=new ScheduledThreadPoolExecutor(1,r->{var t=new Thread(r,"EcoSkills-awards-deadlines");t.setDaemon(true);return t;});timers.setRemoveOnCancelPolicy(true);
-        nativeQueue=new NativeOperationQueue(id->{if(initialized)admit(id);},host::review);
+        nativeQueue=new NativeOperationQueue(id->{if(initialized)admit(id);},host::review,host::monotonicNanos);
     }
     private void main(){if(!host.isMain())throw new IllegalStateException("MAIN required");}
     private <T>CompletionStage<T> onMain(Supplier<T> work){var f=new CompletableFuture<T>();try{host.executeMain(()->{try{if(closed)throw new IllegalStateException("Provider closed");f.complete(work.get());}catch(Throwable e){f.completeExceptionally(e);}});}catch(RuntimeException e){f.completeExceptionally(e);}return f;}
@@ -109,13 +110,17 @@ public final class DurableRuntimeProvider implements EnchantingXPProvider,AutoCl
             if(!session.equals(sessions.get(id)))throw new IllegalStateException("Session replaced");
             host.publish(snapshot);writer.bindReconciled(snapshot.fence());fences.put(id,snapshot.fence());nativeQueue.resume(id,epoch);return null;
         })).whenComplete((v,e)->host.executeMain(()->{
-            admitting.remove(id);if(e!=null){nativeQueue.retryAdmission(id);host.review(id,"native_admission_pending");result.completeExceptionally(e);}else{result.complete(null);recoverInternal(8);}
+            boolean current=admitting.remove(id,result)&&session.equals(sessions.get(id));
+            if(e!=null){
+                if(current){nativeQueue.retryAdmission(id);var fence=fences.get(id);host.review(id,"native_admission_pending:"+nativeQueue.diagnostic(id)+",fenceRevision="+(fence==null?"absent":fence.revision())+",cause="+e.getClass().getSimpleName()+":"+e.getMessage());}
+                result.completeExceptionally(e);
+            }else{result.complete(null);if(current)recoverInternal(8);}
         }));return result;
     }
     public void joined(UUID id){main();if(initialized){retire(id);admit(id);}}
     public void retire(UUID id){
-        main();UUID original=sessions.remove(id);if(original!=null){var live=liveSessions.remove(original);if(live!=null)live.set(false);}var old=fences.remove(id);writerIfPresentFreeze(id);nativeQueue.retire(id);
-        if(initialized&&original!=null&&old!=null)host.access().flush(id).thenCompose(v->sql(()->store.releaseSession(scope,id,original)));
+        main();admitting.remove(id);UUID original=sessions.remove(id);if(original!=null){var live=liveSessions.remove(original);if(live!=null)live.set(false);}fences.remove(id);writerIfPresentFreeze(id);nativeQueue.retire(id);
+        if(initialized&&original!=null)host.access().flush(id).thenCompose(v->sql(()->store.releaseSession(scope,id,original)));
     }
     private void writerIfPresentFreeze(UUID id){if(writer!=null)writer.detach(id);}
     @Override public CompletionStage<EnchantingXPConsumer.Attribution> preparePurchase(Plugin owner,UUID player,UUID operation){
@@ -123,16 +128,35 @@ public final class DurableRuntimeProvider implements EnchantingXPProvider,AutoCl
         if(!admission.tryAcquire())return CompletableFuture.failedStage(new RejectedExecutionException("Provider admission full"));
         var flow=sql(()->store.captured(scope,operation)).thenCompose(existing->{
             if(existing!=null){if(!existing.request().playerId().equals(player))return CompletableFuture.failedStage(new IllegalStateException("Capture player conflict"));return CompletableFuture.completedStage(existing);}
-            return sql(()->store.intent(scope,operation)).thenCompose(intent->onMain(()->{
-                if(intent!=null){if(!intent.playerId().equals(player))throw new IllegalStateException("Intent player conflict");return intent;}
-                var current=session(player).orElseThrow(()->new IllegalStateException("Player session unavailable; admit before checkout"));
-                return new EnchantingXPConsumer.AttributionRequest(operation,player,scope,current.originalSession());
-            })).thenCompose(request->sql(()->store.retainIntent(request))).thenCompose(request->onMain(()->consumer.capture(request)).thenCompose(Function.identity())).thenCompose(capture->sql(()->{
+            return sql(()->store.intent(scope,operation)).thenCompose(intent->onMain(()->prepareAttributionRequest(player,operation,intent)).thenCompose(Function.identity())).thenCompose(request->sql(()->store.retainIntent(request))).thenCompose(request->onMain(()->consumer.capture(request)).thenCompose(Function.identity())).thenCompose(capture->sql(()->{
                 if(!capture.request().playerId().equals(player)||!capture.request().scope().equals(scope)||!capture.request().operationId().equals(operation))throw new IllegalStateException("Consumer capture conflict");
                 var intent=store.intent(scope,operation);if(!capture.request().equals(intent))throw new IllegalStateException("Original session conflict");return store.retainCapture(capture);
             }));
         });flow.whenComplete((v,e)->admission.release());
         return boundedResponse(flow,()->null).thenCompose(value->value==null?CompletableFuture.failedStage(new TimeoutException("Capture uncertain; reuse operation")):CompletableFuture.completedStage(value));
+    }
+    /** A fresh purchase waits for real admission; retries keep their durable original attribution. MAIN only. */
+    private CompletionStage<EnchantingXPConsumer.AttributionRequest> prepareAttributionRequest(UUID player,UUID operation,EnchantingXPConsumer.AttributionRequest intent){
+        main();
+        if(intent!=null){
+            if(!intent.playerId().equals(player))return CompletableFuture.failedStage(new IllegalStateException("Intent player conflict"));
+            return CompletableFuture.completedStage(intent);
+        }
+        if(!host.online(player))return CompletableFuture.failedStage(new IllegalStateException("Player offline before purchase admission"));
+        if(!nativeQueue.ready(player)&&!grantTail.toCompletableFuture().isDone()){
+            UUID original=sessions.get(player);
+            return grantTail.handle((v,e)->null).thenCompose(v->onMain(()->{
+                if(original!=null&&!original.equals(sessions.get(player)))throw new IllegalStateException("Player session changed while waiting for native grant");
+                return prepareAttributionRequest(player,operation,null);
+            })).thenCompose(Function.identity());
+        }
+        CompletionStage<Void> ready=nativeQueue.ready(player)?CompletableFuture.completedStage(null):admit(player);
+        UUID expected=sessions.get(player);
+        return ready.thenCompose(v->onMain(()->{
+            if(!host.online(player)||expected==null||!expected.equals(sessions.get(player)))throw new IllegalStateException("Player session changed during purchase admission");
+            var current=session(player).orElseThrow(()->new IllegalStateException("Player admission unavailable before capture"));
+            return new EnchantingXPConsumer.AttributionRequest(operation,player,scope,current.originalSession());
+        }));
     }
     private static final class Refusal extends RuntimeException {final Observation observation;Refusal(State state,String reason){observation=new Observation(state,reason,null);}}
     private Observation failure(Throwable error,String fallback){for(Throwable cause=error;cause!=null;cause=cause.getCause())if(cause instanceof Refusal refusal)return refusal.observation;return new Observation(State.UNKNOWN,fallback,null);}

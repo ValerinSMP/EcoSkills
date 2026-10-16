@@ -1,3 +1,11 @@
+# Admisión de compra tras inactividad — 2026-10-16
+
+- Canónica personal. preparePurchase espera readmisión real antes de captura nueva; session sigue snapshot cache-only estricto20s. Lease60s/contrato público/identidad durable conservados. Espera grant en curso; protege desconexión y finalizaciones viejas. Diagnóstico de fallo incluye epoch/estado/fenceRevision.
+- Build personal limitado JDK25/release21;124 tests JVM/H2 sin fallos,10 nuevos de relojes/lease/join/concurrencia/reenvío. No son MySQL/Paper/Test reales.
+- Candidato EcoSkills y hash en session-fix-20261016. No instalado/activo/gameplay, sin lifecycle ni SQL real. API pública byte a byte idéntica; no SDK nuevo.
+- Handoff docs/PLAYER-SESSION-HANDOFF.md: vEnchanting debe retirar preconsulta bloqueante session y esperar preparePurchase; no se editó vEnchanting/vPets.
+- Pendiente adaptación externa y aceptación real Test tras20/63s, reconexión y lease ajeno. Cambios ajenos preservados/excluidos.
+
 # Corrección de arranque durable XP — 2026-10-15
 
 - Canónica personal. EnchantingRuntime arma inicio único en afterLoad + onReload END; espera categorías y handler real, sin timer cancelable. Mensaje/stack/causas completos; evita registro tardío tras baja. API pública y mecanismo durable sin cambios.
