@@ -67,6 +67,7 @@ class EcoSkillsPlugin : LibreforgePlugin() {
     init {
         plugin = this
         com.willfp.ecoskills.api.observation.ObservationService.install(this)
+        com.willfp.ecoskills.skills.SkillRequirementViews.install(this)
     }
 
     override fun loadConfigCategories(): List<ConfigCategory> {

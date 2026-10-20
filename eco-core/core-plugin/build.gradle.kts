@@ -6,6 +6,7 @@ dependencies {
 
     implementation("com.willfp:ecomponent:1.5.0")
     testImplementation("org.mockito:mockito-core:5.20.0")
+    testImplementation("net.kyori:adventure-platform-bukkit:4.4.1")
     testImplementation("com.willfp:eco:${rootProject.property("eco-version")}")
     testImplementation("com.willfp:libreforge:${rootProject.property("libreforge-version")}:all") { isTransitive = false }
     testImplementation("io.papermc.paper:paper-api:1.21.8-R0.1-SNAPSHOT")
