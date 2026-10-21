@@ -28,6 +28,7 @@ private const val TICK_DURATION = 50L
 private val blacklist = mutableMapOf<UUID, Long>()
 
 private val whitelist = mutableMapOf<UUID, Long>()
+private val temporaryBars = mutableMapOf<UUID, Pair<Any, BukkitTask>>()
 
 private val actionBarEnabledKey = PersistentDataKey(
     namespacedKeyOf("ecoskills", "actionbar_enabled"),
@@ -93,23 +94,23 @@ object ActionBarHandler {
     private val disabledWorlds = plugin.configYml
         .getStrings("persistent-action-bar.disabled-in-worlds")
 
-    private fun trySendMessage(player: Player) {
+    private fun trySendMessage(player: Player): Boolean {
         if (player.isPersistentActionBarPaused || !player.isPersistentActionBarEnabled) {
-            return
+            return false
         }
 
         if (plugin.configYml.getBool("persistent-action-bar.require-permission")) {
             if (!player.hasPermission("ecoskills.enable-persistent-action-bar")) {
-                return
+                return false
             }
         }
 
         if (disabledWorlds.containsIgnoreCase(player.world.name)) {
-            return
+            return false
         }
 
         if (player.gameMode in setOf(GameMode.CREATIVE, GameMode.SPECTATOR)) {
-            return
+            return false
         }
 
         if (plugin.configYml.getBool("persistent-action-bar.scale-health")) {
@@ -126,6 +127,29 @@ object ActionBarHandler {
                     )
                 )
         )
+        return true
+    }
+
+    /** Main-thread explicit override; packet compatibility sees this as our own send. */
+    fun showTemporaryActionBar(player: Player, message: String, durationMillis: Long): Boolean {
+        check(Bukkit.isPrimaryThread()) { "Temporary actionbar requires the main thread" }
+        require(durationMillis in 50L..10000L) { "Duration must be 50..10000 ms" }
+        if (!player.isOnline || !plugin.isEnabled) return false
+        temporaryBars.remove(player.uniqueId)?.second?.cancel()
+        val token=Any()
+        blacklist[player.uniqueId]=maxOf(blacklist[player.uniqueId] ?: 0L, System.currentTimeMillis()+durationMillis)
+        player.sendPersistentActionBar(message)
+        val restore=Bukkit.getScheduler().runTaskLater(plugin, Runnable {
+            if (temporaryBars[player.uniqueId]?.first !== token) return@Runnable
+            temporaryBars.remove(player.uniqueId)
+            if (!player.isOnline || player.isPersistentActionBarPaused) return@Runnable
+            blacklist.remove(player.uniqueId)
+            // Re-evaluate settings, permissions, world, health and mana; never replay captured text.
+            if (!plugin.configYml.getBool("persistent-action-bar.enabled") || !trySendMessage(player))
+                player.sendPersistentActionBar("")
+        }, (durationMillis+49L)/50L)
+        temporaryBars[player.uniqueId]=token to restore
+        return true
     }
 
     internal fun startTicking() {
