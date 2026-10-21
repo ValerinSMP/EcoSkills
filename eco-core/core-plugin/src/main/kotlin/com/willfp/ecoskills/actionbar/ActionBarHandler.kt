@@ -137,12 +137,12 @@ object ActionBarHandler {
         if (!player.isOnline || !plugin.isEnabled) return false
         temporaryBars.remove(player.uniqueId)?.second?.cancel()
         val token=Any()
-        blacklist[player.uniqueId]=maxOf(blacklist[player.uniqueId] ?: 0L, System.currentTimeMillis()+durationMillis)
+        blacklist[player.uniqueId]=System.currentTimeMillis()+durationMillis
         player.sendPersistentActionBar(message)
         val restore=Bukkit.getScheduler().runTaskLater(plugin, Runnable {
             if (temporaryBars[player.uniqueId]?.first !== token) return@Runnable
             temporaryBars.remove(player.uniqueId)
-            if (!player.isOnline || player.isPersistentActionBarPaused) return@Runnable
+            if (Bukkit.getPlayer(player.uniqueId) !== player || !player.isOnline || player.isPersistentActionBarPaused) return@Runnable
             blacklist.remove(player.uniqueId)
             // Re-evaluate settings, permissions, world, health and mana; never replay captured text.
             if (!plugin.configYml.getBool("persistent-action-bar.enabled") || !trySendMessage(player))

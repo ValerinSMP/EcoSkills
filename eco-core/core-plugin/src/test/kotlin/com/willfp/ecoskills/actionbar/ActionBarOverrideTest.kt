@@ -43,8 +43,10 @@ class ActionBarOverrideTest {
    mockStatic(Bukkit::class.java).use { bm ->
     bm.`when`<Boolean>{Bukkit.isPrimaryThread()}.thenReturn(true)
     bm.`when`<BukkitScheduler>{Bukkit.getScheduler()}.thenReturn(scheduler)
+    bm.`when`<Player>{Bukkit.getPlayer(id)}.thenReturn(player)
     `when`(profile.read(getActionBarObservationKey())).thenReturn(true)
     `when`(config.getFormattedString(eq("persistent-action-bar.format"),any(PlaceholderContext::class.java))).thenAnswer { "health=${player.health}" }
+    map("blacklist")[id]=System.currentTimeMillis()+2700
     assertTrue(showTemporaryActionBar(player,"Disponible en 19 s",1000))
     player.pausePersistentActionBar() // Own packet: must not extend to the old 2700 ms pause.
     assertTrue(map("blacklist")[id]!!-System.currentTimeMillis() <= 1000L)
@@ -63,6 +65,10 @@ class ActionBarOverrideTest {
     assertTrue(showTemporaryActionBar(player,"last notice",1000));map("blacklist")[id]=0L;scheduled.removeAt(0).run()
     val last=mockingDetails(spigot).invocations.last().rawArguments[1] as Array<net.md_5.bungee.api.chat.BaseComponent>
     assertEquals("",last.joinToString(""){it.toPlainText()})
+    assertTrue(showTemporaryActionBar(player,"old connection",1000));map("blacklist")[id]=0L
+    bm.`when`<Player>{Bukkit.getPlayer(id)}.thenReturn(mock(Player::class.java))
+    val beforeReconnect=mockingDetails(spigot).invocations.size;scheduled.removeAt(0).run()
+    assertEquals(beforeReconnect,mockingDetails(spigot).invocations.size)
     bm.`when`<Boolean>{Bukkit.isPrimaryThread()}.thenReturn(false)
     assertThrows(IllegalStateException::class.java){showTemporaryActionBar(player,"bad thread",1000)}
    }
