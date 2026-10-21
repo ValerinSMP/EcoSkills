@@ -160,7 +160,6 @@ xp-gain-methods:
       player_placed: false
       blocks:
         - pumpkin
-        - melon
 
   - trigger: mine_block
     multiplier: 5
