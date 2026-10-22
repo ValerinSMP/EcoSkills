@@ -1,7 +1,7 @@
 # Pilot: native EcoSkills UI. No balance or XP changes.
 enabled: false
 titles:
-  summary: Tu personaje
+  summary: Estadísticas y equipo
   combat: Estadísticas → Combate
   detail: Combate → Detalle
 sources:
@@ -27,7 +27,7 @@ text:
   - '&7Consulta Fuerza y críticos.'
   view-detail: '&eClic para ver el detalle'
   back: '&e← Volver'
-  close: '&cCerrar'
+  close: '&c✘ Cerrar'
   refresh: '&#FFDA29Actualizar'
   refresh-lore:
   - '&7Vuelve a consultar vida, maná y aportes.'
@@ -66,3 +66,31 @@ text:
   - ' '
   - '&8Un efecto preparado no se aplica a todo golpe.'
   - '&8No se calcula daño total ni pérdida de vida.'
+  summary:
+    strength: '&7Fuerza: &f%value% puntos'
+    crit_chance: '&7Probabilidad crítica: &f%value% puntos'
+    crit_damage: '&7Daño crítico: &f%value% puntos'
+  equipment:
+    read-only: '&8Equipo puesto · Solo consulta'
+    empty-helmet: '&8Sin casco'
+    empty-chestplate: '&8Sin pechera'
+    empty-leggings: '&8Sin pantalones'
+    empty-boots: '&8Sin botas'
+    empty-lore:
+    - '&7Este espacio de armadura está vacío.'
+    - '&8Puedes equiparte desde tu inventario.'
+  pet:
+    title: '&#FFD166Mascota'
+    unavailable:
+    - '&8Datos de mascota no disponibles.'
+    - '&7Consulta tu mascota en su menú.'
+    none:
+    - '&7Sin mascota activa.'
+    open: '&eClic para abrir Mascotas'
+  categories:
+    survival: '&fSupervivencia'
+    mana: '&fManá y habilidades'
+    gathering: '&fRecolección'
+    xp: '&fBonificaciones de experiencia'
+  coming-soon:
+  - '&8Próximamente'

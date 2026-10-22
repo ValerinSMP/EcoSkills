@@ -18,6 +18,7 @@ import com.willfp.libreforge.observation.CachedEffects
 import org.bukkit.Material
 import org.bukkit.attribute.Attribute
 import org.bukkit.entity.Player
+import org.bukkit.inventory.ItemStack
 import java.util.UUID
 
 internal data class CombatResources(val health: Double, val maximumHealth: Double?, val mana: Int?, val maximumMana: Double?)
@@ -27,6 +28,21 @@ internal fun readCombatResources(player: Player, mana: () -> Int?, maximumMana: 
     val current = mana()
     return CombatResources(player.health, maximumHealth(),
         current, if (current != null) maximumMana() else null)
+}
+
+/** Fixed native menu layout; every entry is display-only unless it has an explicit navigation handler. */
+internal enum class SummarySlot(val row: Int, val column: Int) {
+    CHARACTER(2, 2), HELMET(2, 3), CHESTPLATE(3, 3), LEGGINGS(4, 3), BOOTS(5, 3),
+    PET(4, 2), COMBAT(2, 6), SURVIVAL(2, 7), MANA(2, 8), GATHERING(3, 6), XP(3, 7),
+    BACK(6, 4), CLOSE(6, 5), REFRESH(6, 6)
+}
+
+internal fun readEquipmentPreview(player: Player): Map<SummarySlot, ItemStack?> {
+    check(org.bukkit.Bukkit.isPrimaryThread())
+    val equipment = player.inventory
+    return mapOf(SummarySlot.HELMET to equipment.helmet, SummarySlot.CHESTPLATE to equipment.chestplate,
+        SummarySlot.LEGGINGS to equipment.leggings, SummarySlot.BOOTS to equipment.boots)
+        .mapValues { (_, item) -> item?.takeUnless { it.type.isAir }?.clone() }
 }
 
 private class CombatMenuYml : ExtendableConfig("combat-menu", true, plugin, plugin.javaClass, "", ConfigType.YAML)
@@ -58,10 +74,83 @@ object CombatStatsGUI {
     private fun openCombat(player: Player) = render(player, "combat", null)
     private fun openDetail(player: Player, id: String) = render(player, "detail", id)
 
+    private fun combatSummary(player: Player): List<String> {
+        val observation = ObservationService.cached(player.uniqueId,
+            ObservationRequest(setOf(ObservationRequest.Section.STATS))).asMap()
+        val stats = ((observation["stats"] as? Map<*, *>)?.get("items") as? List<*>)
+            ?.filterIsInstance<Map<*, *>>() ?: emptyList()
+        return listOf("strength", "crit_chance", "crit_damage").map { id ->
+            val field = stats.firstOrNull { it["id"] == id }?.get("modified") as? Map<*, *>
+            val value = (field?.get("value") as? Number)?.toDouble()?.takeIf { field["status"] == "available" }
+            text("summary.$id").replace("%value%", number(value))
+        } + listOf(" ", text("view-detail"))
+    }
+
+    private fun renderSummary(player: Player, current: List<String>) {
+        val equipment = readEquipmentPreview(player)
+        // vPets remains authoritative. Its current public command opens the owner menu;
+        // private PetService fields are deliberately not inspected to guess selected/active state.
+        val pets = org.bukkit.Bukkit.getPluginCommand("vpets")?.takeIf {
+            it.plugin.name == "vPets" && it.plugin.isEnabled
+        }
+        val filler = item(Material.BLACK_STAINED_GLASS_PANE, " ", emptyList())
+        val view = menu(6) {
+            title = config.getString("titles.summary")
+            for (row in 1..6) for (column in 1..9) setSlot(row, column, slot(filler))
+            fun put(at: SummarySlot, icon: ItemStack) = setSlot(at.row, at.column, slot(icon))
+            put(SummarySlot.CHARACTER, item(Material.PLAYER_HEAD,
+                text("character").replace("%player%", player.name), current))
+            for ((at, equipped) in equipment) {
+                val id = at.name.lowercase()
+                val icon = if (equipped != null) ItemStackBuilder(equipped)
+                    .addLoreLines(listOf(" ", text("equipment.read-only"))).build()
+                else item(Material.valueOf("CHAINMAIL_${at.name}"), text("equipment.empty-$id"), lines("equipment.empty-lore"))
+                put(at, icon)
+            }
+            val petIcon = item(Material.BONE, text("pet.title"),
+                lines("pet.unavailable") + if (pets != null) listOf(" ", text("pet.open")) else emptyList())
+            if (pets == null) put(SummarySlot.PET, petIcon)
+            else setSlot(SummarySlot.PET.row, SummarySlot.PET.column, slot(petIcon) {
+                onLeftClick { _, _ ->
+                    if (pets.plugin.isEnabled) {
+                        player.closeInventory()
+                        pets.execute(player, pets.name, emptyArray())
+                    }
+                }
+            })
+            setSlot(SummarySlot.COMBAT.row, SummarySlot.COMBAT.column,
+                slot(item(Material.IRON_SWORD, text("combat"), combatSummary(player))) {
+                    onLeftClick { _, _ -> openCombat(player) }
+                })
+            for ((at, material, key) in listOf(
+                Triple(SummarySlot.SURVIVAL, Material.GOLDEN_APPLE, "survival"),
+                Triple(SummarySlot.MANA, Material.BLAZE_POWDER, "mana"),
+                Triple(SummarySlot.GATHERING, Material.IRON_PICKAXE, "gathering"),
+                Triple(SummarySlot.XP, Material.EXPERIENCE_BOTTLE, "xp"))) {
+                // No click handler: an unfinished category never pretends to navigate.
+                put(at, item(material, text("categories.$key"), lines("coming-soon")))
+            }
+            setSlot(SummarySlot.BACK.row, SummarySlot.BACK.column,
+                slot(item(Material.SPECTRAL_ARROW, text("back"), emptyList())) {
+                    onLeftClick { _, _ -> SkillsGUI.open(player) }
+                })
+            setSlot(SummarySlot.CLOSE.row, SummarySlot.CLOSE.column,
+                slot(item(Material.BARRIER, text("close"), emptyList())) {
+                    onLeftClick { _, _ -> player.closeInventory() }
+                })
+            setSlot(SummarySlot.REFRESH.row, SummarySlot.REFRESH.column,
+                slot(item(Material.CLOCK, text("refresh"), lines("refresh-lore"))) {
+                    onLeftClick { _, _ -> cache.remove(player.uniqueId); openSummary(player) }
+                })
+        }
+        view.open(player)
+    }
+
     private fun render(player: Player, screen: String, id: String?) {
         check(org.bukkit.Bukkit.isPrimaryThread())
         if (!player.isOnline) return
         val current = resources(player)
+        if (screen == "summary") { renderSummary(player, current); return }
         val filler = item(Material.BLACK_STAINED_GLASS_PANE, " ", emptyList())
         val view = menu(4) {
             title = config.getString("titles.$screen")
@@ -69,14 +158,6 @@ object CombatStatsGUI {
                 slot(filler))
             setSlot(1, 5, slot(item(Material.PLAYER_HEAD, text("character"), current)))
             when (screen) {
-                "summary" -> {
-                    setSlot(2, 5, slot(item(Material.IRON_SWORD, text("combat"), lines("combat-lore"))) {
-                        onLeftClick { _, _ -> openCombat(player) }
-                    })
-                    setSlot(3, 5, slot(item(Material.BOOK, text("legacy"), emptyList())) {
-                        onLeftClick { _, _ -> StatsGUI.openLegacy(player) }
-                    })
-                }
                 "combat" -> for ((column, statId) in listOf(3 to "strength", 5 to "crit_chance", 7 to "crit_damage")) {
                     val stat = Stats.getByID(statId)
                     setSlot(2, column, slot(item(Material.ENCHANTED_BOOK, stat?.name ?: text("unavailable"),
