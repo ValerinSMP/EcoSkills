@@ -17,6 +17,7 @@ object StatsGUI {
     private lateinit var menu: Menu
 
     internal fun update() {
+        CombatStatsGUI.clearCache()
         menu = buildMenu()
     }
 
@@ -69,7 +70,9 @@ object StatsGUI {
         }
     }
 
+    fun openLegacy(player: Player) { menu.open(player) }
+
     fun open(player: Player) {
-        menu.open(player)
+        if (CombatStatsGUI.isEnabled()) CombatStatsGUI.openSummary(player) else menu.open(player)
     }
 }

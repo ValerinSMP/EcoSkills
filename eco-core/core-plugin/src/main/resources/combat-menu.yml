@@ -1,0 +1,68 @@
+# Pilot: native EcoSkills UI. No balance or XP changes.
+enabled: false
+titles:
+  summary: Tu personaje
+  combat: Estadísticas → Combate
+  detail: Combate → Detalle
+sources:
+  ecoarmor: '&fEquipo'
+  ecoenchants: '&fEncantamientos'
+  ecoitems: '&fObjeto equipado'
+  talismans: '&fTalismán'
+triggers:
+  melee_attack: cuerpo a cuerpo
+  bow_attack: arco
+  trident_attack: tridente
+  take_damage: daño recibido
+worlds:
+  world_crimson: Crimson
+  world_warden: Warden
+text:
+  legacy: '&eVer todas las estadísticas actuales'
+  character: '&#FFDA29Tu personaje'
+  health: '&7Vida: &f%current% / %max%'
+  mana: '&7Maná: &f%current% / %max%'
+  combat: '&#FFDA29Combate'
+  combat-lore:
+  - '&7Consulta Fuerza y críticos.'
+  view-detail: '&eClic para ver el detalle'
+  back: '&e← Volver'
+  close: '&cCerrar'
+  refresh: '&#FFDA29Actualizar'
+  refresh-lore:
+  - '&7Vuelve a consultar vida, maná y aportes.'
+  unavailable: '&8No disponible'
+  points: '&7Puntos actuales: &f%value%'
+  explanation:
+    strength:
+    - '&7Los puntos de Fuerza no son porcentaje de daño.'
+    - '&7Se usa la fórmula configurada de esta estadística.'
+    - '&7Ejemplo: ×1,25 equivale a +25% por Fuerza.'
+    crit_chance:
+    - '&7El umbral incluye la base de la fórmula nativa.'
+    - '&7No equivale solo a tus puntos de crítico.'
+    crit_damage:
+    - '&7Modifica el multiplicador del crítico de EcoSkills.'
+    - '&7No representa pérdida de vida del objetivo.'
+  threshold: '&7Umbral de crítico configurado: &f%value%%'
+  native-multiplier: '&7Multiplicador de esta estadística: &f×%value%'
+  native-scope: '&8Solo en los ataques admitidos por su efecto nativo.'
+  contributions: '&#FFDA29Aportes a los puntos'
+  base: '&7Base acumulada: &f%value%'
+  add-contribution: '&7Aporte aplicado: &f%value% puntos'
+  multiply-contribution: '&7Factor aplicado: &f×%value%'
+  source-unavailable: '&8Origen de estos aportes: no disponible.'
+  conditional: '&#FFDA29Otros efectos preparados'
+  conditional-entry: '%source%&7: &f×%value% &7(%trigger%)'
+  world-scope: '&8En %world%'
+  unknown-world: mundo específico
+  event-restrictions: '&8Sujeto también a filtros del impacto.'
+  unknown-source: '&7Fuente no identificada'
+  unknown-trigger: alcance no disponible
+  no-known-bonuses: '&8Sin multiplicadores externos conocidos en esta observación.'
+  pending: '&8Cambios pendientes de publicación; vuelve a consultar.'
+  partial: '&8Detalle parcial: hay más aportes no mostrados.'
+  limits:
+  - ' '
+  - '&8Un efecto preparado no se aplica a todo golpe.'
+  - '&8No se calcula daño total ni pérdida de vida.'
