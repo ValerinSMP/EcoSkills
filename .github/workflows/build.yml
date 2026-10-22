@@ -1,27 +1,5 @@
 name: Build
 on:
-  push:
-    paths:
-      - '**/*.java'
-      - '**/*.kt'
-      - '**/*.kts'
-      - '**/*.gradle'
-      - '**/*.properties'
-      - '**/src/main/resources/**'
-      - 'gradle/**'
-      - 'gradlew'
-      - '.github/workflows/build.yml'
-  pull_request:
-    paths:
-      - '**/*.java'
-      - '**/*.kt'
-      - '**/*.kts'
-      - '**/*.gradle'
-      - '**/*.properties'
-      - '**/src/main/resources/**'
-      - 'gradle/**'
-      - 'gradlew'
-      - '.github/workflows/build.yml'
   workflow_dispatch:
 jobs:
   build:
