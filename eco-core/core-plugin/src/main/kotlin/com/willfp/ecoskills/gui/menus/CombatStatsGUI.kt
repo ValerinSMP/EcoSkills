@@ -6,8 +6,8 @@ import com.willfp.eco.core.gui.menu
 import com.willfp.eco.core.gui.slot
 import com.willfp.eco.core.gui.slot.FillerMask
 import com.willfp.eco.core.items.builder.ItemStackBuilder
-import com.willfp.eco.core.placeholder.context.placeholderContext
-import com.willfp.eco.util.evaluateExpression
+import com.willfp.ecoskills.api.observation.PureExpression
+import kotlin.math.roundToInt
 import com.willfp.ecoskills.api.observation.ObservationRequest
 import com.willfp.ecoskills.api.observation.ObservationService
 import com.willfp.ecoskills.magic.MagicTypes
@@ -34,7 +34,8 @@ internal fun readCombatResources(player: Player, mana: () -> Int?, maximumMana: 
 /** Fixed native menu layout; every entry is display-only unless it has an explicit navigation handler. */
 internal enum class SummarySlot(val row: Int, val column: Int) {
     CHARACTER(2, 2), HELMET(2, 3), CHESTPLATE(3, 3), LEGGINGS(4, 3), BOOTS(5, 3),
-    PET(4, 2), COMBAT(2, 6), SURVIVAL(2, 7), MANA(2, 8), GATHERING(3, 6), XP(3, 7),
+    PET(4, 2), COMBAT(2, 6), SURVIVAL(2, 8), MANA(4, 8), GATHERING(2, 7), XP(4, 6),
+    FORAGING(3, 6), FISHING(3, 7), MISC(3, 8), EFFECTS(6, 7),
     BACK(6, 4), CLOSE(6, 5), REFRESH(6, 6)
 }
 
@@ -55,9 +56,10 @@ object CombatStatsGUI {
     private val cache = LinkedHashMap<UUID, Breakdown>()
     fun isEnabled() = config.getBool("enabled")
     private fun text(key: String) = config.getFormattedString("text.$key")
-    private fun number(value: Double?) = value?.takeIf { it.isFinite() }?.let(::statDisplayText) ?: text("unavailable")
+    private fun number(value: Double?) = value?.takeIf { it.isFinite() }?.let { statDisplayText(it).replace('.', ',') } ?: text("unavailable")
     private fun lines(key: String) = config.getFormattedStrings("text.$key")
-    internal fun clearCache() { cache.clear() }
+    private val formulas = LinkedHashMap<String, PureExpression?>()
+    internal fun clearCache() { cache.clear(); formulas.clear() }
     private fun item(material: Material, name: String, lore: List<String>) = ItemStackBuilder(material)
         .setDisplayName(name).addLoreLines(lore).build()
 
@@ -72,20 +74,62 @@ object CombatStatsGUI {
     }
 
     fun openSummary(player: Player) = render(player, "summary", null)
-    private fun openCombat(player: Player) = render(player, "combat", null)
+    private fun openCombat(player: Player) = openCategory(player, "combat")
     private fun openDetail(player: Player, id: String) = render(player, "detail", id)
 
-    private fun combatSummary(player: Player): List<String> {
-        val observation = ObservationService.cached(player.uniqueId,
-            ObservationRequest(setOf(ObservationRequest.Section.STATS))).asMap()
-        val stats = ((observation["stats"] as? Map<*, *>)?.get("items") as? List<*>)
-            ?.filterIsInstance<Map<*, *>>() ?: emptyList()
-        return listOf("strength", "crit_chance", "crit_damage").map { id ->
-            val field = stats.firstOrNull { it["id"] == id }?.get("modified") as? Map<*, *>
-            val value = (field?.get("value") as? Number)?.toDouble()?.takeIf { field["status"] == "available" }
-            text("summary.$id").replace("%value%", number(value))
-        } + listOf(" ", text("view-detail"))
+    private fun categoryIds() = config.getSubsections("catalog.categories").map { it.getString("id") }
+    private fun categoryConfig(id: String) = config.getSubsections("catalog.categories").first { it.getString("id") == id }
+    private fun categoryStats(id: String) = categoryConfig(id).getStrings("stats").filter { Stats.getByID(it) != null && config.has("catalog.stats.$it") }
+    private fun statName(id: String) = config.getFormattedString("catalog.stats.$id.name")
+    private fun statIcon(id: String) = Material.valueOf(config.getString("catalog.stats.$id.icon"))
+    private fun categoryIcon(id: String) = Material.valueOf(categoryConfig(id).getString("icon"))
+    private fun categoryName(id: String) = categoryConfig(id).getFormattedString("name")
+    private fun categoryForStat(id: String) = categoryIds().firstOrNull { id in categoryStats(it) } ?: "combat"
+    private fun observedStats(player: Player): List<Map<*, *>> = statRows(ObservationService.cached(player.uniqueId,
+        ObservationRequest(setOf(ObservationRequest.Section.STATS))).asMap())
+    private fun statRows(observation: Map<*, *>): List<Map<*, *>> =
+        ((observation["stats"] as? Map<*, *>)?.get("items") as? List<*>)?.filterIsInstance<Map<*, *>>() ?: emptyList()
+    private fun observedNumber(rows: List<Map<*, *>>, id: String, key: String = "modified"): Double? {
+        val field = rows.firstOrNull { it["id"] == id }?.get(key) as? Map<*, *> ?: return null
+        return (field["value"] as? Number)?.toDouble()?.takeIf { field["status"] == "available" && it.isFinite() }
     }
+    private fun openCategory(player: Player, id: String) = render(player, "category", id)
+    private fun categoryLore(player: Player, id: String, rows: List<Map<*, *>>): List<String> =
+        categoryConfig(id).getFormattedStrings("description") + listOf(" ") + categoryStats(id).map { stat ->
+            text("stat-summary").replace("%name%", statName(stat)).replace("%value%", number(observedNumber(rows, stat)))
+        } + listOf(" ", text("view-detail"))
+
+    /** Read the configured expression, not a duplicate gameplay formula or a universal damage total. */
+    private fun metricLore(player: Player, id: String, rows: List<Map<*, *>>): List<String> {
+        val definition = config.getSubsection("catalog.stats.$id")
+        val ownerId = definition.getStringOrNull("owner") ?: id
+        val owner = Stats.getByID(ownerId) ?: return listOf(text("unavailable"))
+        if (observedNumber(rows, id) == null || observedNumber(rows, ownerId) == null) return listOf(text("unavailable"))
+        if (observedNumber(rows, ownerId) == 0.0) return listOf(text("native-zero"))
+        val effect = owner.config.getSubsections("effects").firstOrNull { it.getString("id") == definition.getString("effect") }
+            ?: return listOf(text("native-unavailable"))
+        val expression = effect.getSubsection("args").getStringOrNull(definition.getString("argument"))
+            ?: return listOf(text("native-unavailable"))
+        // Reuse the observation API's pure native parser: cached inputs only, no Player/PAPI/profile resolution.
+        if (formulas.size >= 128 && !formulas.containsKey(expression)) formulas.remove(formulas.keys.first())
+        if (!formulas.containsKey(expression)) formulas[expression] = PureExpression.prepare(expression, com.willfp.eco.core.Eco.get().javaClass.classLoader)
+        val prepared = formulas[expression] ?: return listOf(text("native-unavailable"))
+        val inputs = HashMap<String, Double>()
+        for (variable in prepared.variables()) {
+            val statId = if (variable == "%level%") ownerId else variable.removePrefix("%ecoskills_").removeSuffix("%")
+            val value = observedNumber(rows, statId) ?: return listOf(text("native-unavailable"))
+            inputs[variable] = value
+        }
+        val value = prepared.evaluate(inputs) ?: return listOf(text("native-unavailable"))
+        return definition.getFormattedStrings("result").map {
+            it.replace("%value%", number(value)).replace("%percent%", number((value - 1) * 100))
+                .replace("%chance%", number(value.coerceIn(0.0, 100.0)))
+                .replace("%rounded%", number(value.roundToInt().toDouble()))
+        } + listOf(text("formula-scope"))
+    }
+    private fun statLore(player: Player, id: String, rows: List<Map<*, *>>): List<String> =
+        listOf(text("points").replace("%value%", number(observedNumber(rows, id))), " ") +
+            config.getFormattedStrings("catalog.stats.$id.description") + listOf(" ") + metricLore(player, id, rows)
 
     private fun renderSummary(player: Player, current: List<String>) {
         val equipment = readEquipmentPreview(player)
@@ -119,18 +163,21 @@ object CombatStatsGUI {
                     }
                 }
             })
-            setSlot(SummarySlot.COMBAT.row, SummarySlot.COMBAT.column,
-                slot(item(Material.IRON_SWORD, text("combat"), combatSummary(player))) {
-                    onLeftClick { _, _ -> openCombat(player) }
-                })
-            for ((at, material, key) in listOf(
-                Triple(SummarySlot.SURVIVAL, Material.GOLDEN_APPLE, "survival"),
-                Triple(SummarySlot.MANA, Material.BLAZE_POWDER, "mana"),
-                Triple(SummarySlot.GATHERING, Material.IRON_PICKAXE, "gathering"),
-                Triple(SummarySlot.XP, Material.EXPERIENCE_BOTTLE, "xp"))) {
-                // No click handler: an unfinished category never pretends to navigate.
-                put(at, item(material, text("categories.$key"), lines("coming-soon")))
+            val observed = observedStats(player)
+            for (id in categoryIds()) {
+                val category = categoryConfig(id)
+                val at = SummarySlot.valueOf(category.getString("slot"))
+                val available = categoryStats(id).isNotEmpty()
+                val icon = item(categoryIcon(id), categoryName(id), if (available) categoryLore(player, id, observed) else lines("coming-soon"))
+                if (available) setSlot(at.row, at.column, slot(icon) { onLeftClick { _, _ -> openCategory(player, id) } })
+                else put(at, icon)
             }
+            // XP aggregation remains outside this stat-only increment; never fabricate a total.
+            put(SummarySlot.XP, item(Material.EXPERIENCE_BOTTLE, text("categories.xp"), lines("coming-soon")))
+            setSlot(SummarySlot.EFFECTS.row, SummarySlot.EFFECTS.column,
+                slot(item(Material.POTION, text("potion-effects"), listOf(text("effect-count").replace("%value%", player.activePotionEffects.size.toString()), " ", text("view-detail")))) {
+                    onLeftClick { _, _ -> render(player, "potions", null) }
+                })
             setSlot(SummarySlot.BACK.row, SummarySlot.BACK.column,
                 slot(item(Material.SPECTRAL_ARROW, text("back"), emptyList())) {
                     onLeftClick { _, _ -> SkillsGUI.open(player) }
@@ -152,15 +199,31 @@ object CombatStatsGUI {
         if (!player.isOnline) return
         val current = resources(player)
         if (screen == "summary") { renderSummary(player, current); return }
-        val view = menu(4) {
-            title = config.getString("titles.$screen")
-            setMask(FillerMask(Material.BLACK_STAINED_GLASS_PANE, *Array(4) { "111111111" }))
-            setSlot(1, 5, slot(item(Material.PLAYER_HEAD, text("character"), current)))
+        val rows = observedStats(player)
+        val view = menu(6) {
+            title = when (screen) { "category" -> config.getString("titles.category").replace("%category%", org.bukkit.ChatColor.stripColor(categoryName(id!!)) ?: ""); "detail" -> config.getString("titles.detail"); else -> config.getString("titles.potions") }
+            setMask(FillerMask(Material.BLACK_STAINED_GLASS_PANE, *Array(6) { "111111111" }))
+            if (screen != "category") setSlot(1, 5, slot(item(Material.PLAYER_HEAD, text("character"), current)))
             when (screen) {
-                "combat" -> for ((column, statId) in listOf(3 to "strength", 5 to "crit_chance", 7 to "crit_damage")) {
-                    val stat = Stats.getByID(statId)
-                    setSlot(2, column, slot(item(Material.ENCHANTED_BOOK, stat?.name ?: text("unavailable"),
-                        listOf(text("view-detail")))) { onLeftClick { _, _ -> openDetail(player, statId) } })
+                "category" -> {
+                    setSlot(1, 5, slot(item(categoryIcon(id!!), categoryName(id), categoryLore(player, id, rows) + current)))
+                    for ((index, statId) in categoryStats(id).take(21).withIndex()) {
+                        setSlot(2 + index / 7, 2 + index % 7,
+                            slot(item(statIcon(statId), statName(statId), statLore(player, statId, rows) + listOf(" ", text("view-detail")))) {
+                                onLeftClick { _, _ -> openDetail(player, statId) }
+                            })
+                    }
+                }
+                "potions" -> {
+                    val effects = player.activePotionEffects.toList()
+                    if (effects.isEmpty()) setSlot(3, 5, slot(item(Material.GLASS_BOTTLE, text("potion-effects"), lines("no-potions"))))
+                    if (effects.size > 28) setSlot(5, 9, slot(item(Material.PAPER, text("potion-effects"), lines("potions-partial"))))
+                    for ((index, effect) in effects.take(28).withIndex()) {
+                        val name = config.getFormattedString("potions.${effect.type.key.key}").takeIf { it.isNotBlank() } ?: text("unknown-potion")
+                        val duration = if (effect.duration < 0) text("infinite") else text("seconds").replace("%value%", (effect.duration / 20).toString())
+                        setSlot(2 + index / 7, 2 + index % 7, slot(item(Material.POTION, name,
+                            listOf(text("potion-level").replace("%value%", (effect.amplifier + 1).toString()), duration))))
+                    }
                 }
                 "detail" -> {
                     val stat = Stats.getByID(id!!)
@@ -169,18 +232,18 @@ object CombatStatsGUI {
                     val conditionalStart = lore.indexOf(text("conditional"))
                     if (contributionStart >= 0 && conditionalStart > contributionStart) {
                         setSlot(2, 3, slot(item(Material.PAPER, text("contributions"), lore.subList(contributionStart + 1, conditionalStart))))
-                        setSlot(2, 5, slot(item(Material.ENCHANTED_BOOK, stat?.name ?: text("unavailable"), lore.take(contributionStart))))
+                        setSlot(2, 5, slot(item(Material.ENCHANTED_BOOK, statName(id), lore.take(contributionStart))))
                         setSlot(2, 7, slot(item(Material.IRON_SWORD, text("conditional"), lore.drop(conditionalStart + 1))))
-                    } else setSlot(2, 5, slot(item(Material.ENCHANTED_BOOK, stat?.name ?: text("unavailable"), lore)))
+                    } else setSlot(2, 5, slot(item(Material.ENCHANTED_BOOK, statName(id), lore)))
                 }
             }
-            setSlot(4, 3, slot(item(Material.SPECTRAL_ARROW, text("back"), emptyList())) {
-                onLeftClick { _, _ -> when(screen) { "detail" -> openCombat(player); "combat" -> openSummary(player); else -> SkillsGUI.open(player) } }
+            setSlot(6, 4, slot(item(Material.SPECTRAL_ARROW, text("back"), emptyList())) {
+                onLeftClick { _, _ -> when(screen) { "detail" -> openCategory(player, categoryForStat(id!!)); else -> openSummary(player) } }
             })
-            setSlot(4, 5, slot(item(Material.BARRIER, text("close"), emptyList())) {
+            setSlot(6, 5, slot(item(Material.BARRIER, text("close"), emptyList())) {
                 onLeftClick { _, _ -> player.closeInventory() }
             })
-            setSlot(4, 7, slot(item(Material.CLOCK, text("refresh"), lines("refresh-lore"))) {
+            setSlot(6, 6, slot(item(Material.CLOCK, text("refresh"), lines("refresh-lore"))) {
                 onLeftClick { _, _ -> cache.remove(player.uniqueId); render(player, screen, id) }
             })
         }
@@ -201,27 +264,14 @@ object CombatStatsGUI {
         val modifiers = ((observation["modifiers"] as? Map<*, *>)?.get("items") as? List<*>)
             ?.filterIsInstance<Map<*, *>>()?.filter { it["statId"] == id } ?: emptyList()
         val active = CachedEffects.getCachedObservation(player.uniqueId)
-        val relevant = active.entries.filter { it.sourceNamespace != "ecoskills" &&
+        val relevant = active.entries.filter { categoryForStat(id) == "combat" && it.sourceNamespace != "ecoskills" &&
             it.triggers.any { trigger -> trigger in setOf("melee_attack", "bow_attack", "trident_attack", "headshot") } }
         val signature = listOf(Stats.getByID(id), id, numeric("base"), effective, modifiers, active.available, active.pending, active.truncated,
             relevant.map { listOf(it.sourceNamespace, it.sourceId, it.effectId, it.triggers, it.worlds, it.literalMultiplier, it.hasEventRestrictions) }).toString()
         val now = System.currentTimeMillis()
         cache[player.uniqueId]?.takeIf { it.session === player && it.signature == signature && now - it.at < 2000 }?.let { return it.lines }
         val stat = Stats.getByID(id) ?: return listOf(text("unavailable"))
-        val lore = arrayListOf(text("points").replace("%value%", number(effective)), " ")
-        lore += lines("explanation.$id")
-        if (effective != null) {
-            // Evaluate the native configured expressions with the stat's existing precise injections.
-            val owner = if (id == "crit_damage") Stats.getByID("crit_chance") else stat
-            val kind = if (id == "strength") "damage_multiplier" else "make_skill_crit"
-            val effect = owner?.config?.getSubsections("effects")?.firstOrNull { it.getString("id") == kind }
-            val key = if (id == "crit_chance") "chance" else "multiplier"
-            val expr = effect?.getSubsection("args")?.getStringOrNull(key)
-            val nativePresent = active.entries.any { it.sourceNamespace == "ecoskills" && it.sourceId.startsWith("${owner?.id}_") && it.effectId == kind }
-            val value = expr?.takeIf { nativePresent && !active.pending }?.let { runCatching { evaluateExpression(it, placeholderContext(player = player, injectable = owner!!.config)) }.getOrNull() }
-            lore += text(if (key == "chance") "threshold" else "native-multiplier").replace("%value%", number(value))
-            lore += text("native-scope")
-        }
+        val lore = ArrayList(statLore(player, id, entries))
         lore += listOf(" ", text("contributions"), text("base").replace("%value%", number(numeric("base"))))
         for (mod in modifiers.take(8)) {
             val amount = (mod["amount"] as? Number)?.toDouble()
@@ -231,7 +281,8 @@ object CombatStatsGUI {
         lore += text("source-unavailable")
         if (modifiers.size > 8) lore += text("partial")
         lore += listOf(" ", text("conditional"))
-        if (!active.available) lore += text("unavailable")
+        if (categoryForStat(id) != "combat") lore += lines("scope-only")
+        else if (!active.available) lore += text("unavailable")
         else {
             if (active.pending) lore += text("pending")
             for (effect in relevant.filter { it.effectId == "damage_multiplier" }.take(5)) {
@@ -250,7 +301,7 @@ object CombatStatsGUI {
             if (relevant.isEmpty()) lore += text("no-known-bonuses")
             if (active.truncated || relevant.size > 5) lore += text("partial")
         }
-        lore += lines("limits")
+        if (categoryForStat(id) == "combat") lore += lines("limits")
         cache.entries.removeIf { now - it.value.at > 2000 || !it.value.session.isOnline }
         if (cache.size >= 128) cache.remove(cache.keys.first())
         cache[player.uniqueId] = Breakdown(player, now, signature, lore.toList())

@@ -1,9 +1,10 @@
-# Pilot: native EcoSkills UI. No balance or XP changes.
 enabled: false
 titles:
   summary: Estadísticas y equipo
   combat: Estadísticas → Combate
-  detail: Combate → Detalle
+  detail: Detalle de estadística
+  category: Estadísticas → %category%
+  potions: Efectos de poción
 sources:
   ecoarmor: '&fEquipo'
   ecoenchants: '&fEncantamientos'
@@ -20,9 +21,9 @@ worlds:
 text:
   legacy: '&eVer todas las estadísticas actuales'
   character: '&#FFDA29Tu personaje'
-  health: '&7Vida: &f%current% / %max%'
-  mana: '&7Maná: &f%current% / %max%'
-  combat: '&#FFDA29Combate'
+  health: '&c❤ Vida: &f%current% / %max%'
+  mana: '&#40ffe6🌊 Maná: &f%current% / %max%'
+  combat: '&#FF6B35Combate'
   combat-lore:
   - '&7Consulta Fuerza y críticos.'
   view-detail: '&eClic para ver el detalle'
@@ -32,7 +33,7 @@ text:
   refresh-lore:
   - '&7Vuelve a consultar vida, maná y aportes.'
   unavailable: '&8No disponible'
-  points: '&7Puntos actuales: &f%value%'
+  points: '&7Puntos de esta estadística: &f%value%'
   explanation:
     strength:
     - '&7Los puntos de Fuerza no son porcentaje de daño.'
@@ -48,10 +49,10 @@ text:
   native-multiplier: '&7Multiplicador de esta estadística: &f×%value%'
   native-scope: '&8Solo en los ataques admitidos por su efecto nativo.'
   contributions: '&#FFDA29Aportes a los puntos'
-  base: '&7Base acumulada: &f%value%'
+  base: '&7Base guardada: &f%value%'
   add-contribution: '&7Aporte aplicado: &f%value% puntos'
   multiply-contribution: '&7Factor aplicado: &f×%value%'
-  source-unavailable: '&8Origen de estos aportes: no disponible.'
+  source-unavailable: '&8Reparto entre equipo, enchants, talismanes y mascotas: no disponible.'
   conditional: '&#FFDA29Otros efectos preparados'
   conditional-entry: '%source%&7: &f×%value% &7(%trigger%)'
   world-scope: '&8En %world%'
@@ -65,7 +66,7 @@ text:
   limits:
   - ' '
   - '&8Un efecto preparado no se aplica a todo golpe.'
-  - '&8No se calcula daño total ni pérdida de vida.'
+  - '&8No representa daño total ni vida perdida.'
   summary:
     strength: '&7Fuerza: &f%value% puntos'
     crit_chance: '&7Probabilidad crítica: &f%value% puntos'
@@ -94,3 +95,352 @@ text:
     xp: '&fBonificaciones de experiencia'
   coming-soon:
   - '&8Próximamente'
+  stat-summary: '%name% &f%value%'
+  formula-scope: '&8Según su fórmula; sujeta a activación y filtros.'
+  native-unavailable: '&8Efecto numérico no disponible para esta consulta.'
+  potion-effects: '&#FFDA29Efectos de poción'
+  effect-count: '&7Efectos de poción activos: &f%value%'
+  no-potions:
+  - '&7No tienes efectos de poción activos.'
+  - '&8Esto no incluye bonos condicionales del equipo.'
+  unknown-potion: '&fEfecto de poción'
+  potion-level: '&7Nivel: &f%value%'
+  seconds: '&7Tiempo restante: &f%value% s'
+  infinite: '&7Duración: &fIndefinida'
+  native-zero: '&8Este efecto no está activo con los puntos actuales.'
+  scope-only:
+  - '&7Solo se aplica en las situaciones y filtros'
+  - '&7admitidos por su efecto nativo.'
+  potions-partial:
+  - '&8Hay más efectos activos no mostrados.'
+catalog:
+  categories:
+  - id: combat
+    slot: COMBAT
+    icon: IRON_SWORD
+    name: '&#FF6B35Combate'
+    description:
+    - '&7Vida, defensa y efectos de tus ataques.'
+    stats:
+    - health
+    - defense
+    - strength
+    - crit_chance
+    - crit_damage
+    - warrior
+    - ferocity
+    - ability_damage
+    - attack_speed
+    - headshot_damage
+    - rapid_shot
+    - knockback_boost
+  - id: mining
+    slot: GATHERING
+    icon: IRON_PICKAXE
+    name: '&#55FFFFMinería'
+    description:
+    - '&7Objetos adicionales al minar bloques válidos.'
+    stats:
+    - mining_fortune
+  - id: farming
+    slot: SURVIVAL
+    icon: GOLDEN_HOE
+    name: '&#7CFF4FAgricultura'
+    description:
+    - '&7Objetos adicionales al cosechar cultivos válidos.'
+    stats:
+    - farming_fortune
+  - id: foraging
+    slot: FORAGING
+    icon: JUNGLE_SAPLING
+    name: '&#00E5A8Tala'
+    description:
+    - '&7Objetos adicionales al talar madera válida.'
+    stats:
+    - foraging_fortune
+  - id: fishing
+    slot: FISHING
+    icon: FISHING_ROD
+    name: '&#00CFFFPesca y tesoros'
+    description:
+    - '&7Suerte nativa para tablas de botín compatibles.'
+    stats:
+    - treasure_chance
+  - id: misc
+    slot: MISC
+    icon: CLOCK
+    name: '&#FFDA29Otras estadísticas'
+    description:
+    - '&7Movimiento, salto y duración de pociones.'
+    stats:
+    - speed
+    - jump_boost
+    - potion_duration
+  - id: magic
+    slot: MANA
+    icon: ENCHANTED_BOOK
+    name: '&#40FFE6Maná e inteligencia'
+    description:
+    - '&7Reserva de maná y experiencia vanilla.'
+    stats:
+    - wisdom
+  stats:
+    health:
+      name: '&c❤ Vida adicional'
+      icon: GOLDEN_APPLE
+      description:
+      - '&7Aumenta tu vida máxima; no es tu vida actual.'
+      - '&7La vida total también incluye la base y otras fuentes.'
+      - '&7No te cura al aumentar el máximo.'
+      effect: bonus_health
+      argument: health
+      result:
+      - '&7Vida adicional de esta fórmula: &f+%value%'
+    defense:
+      name: '&#e884b0🛡 Defensa'
+      icon: IRON_CHESTPLATE
+      description:
+      - '&7Modifica el daño recibido mediante su fórmula.'
+      - '&7Tus puntos no son un porcentaje directo de reducción.'
+      - '&7El daño final depende también de otros efectos y protecciones.'
+      effect: damage_multiplier
+      argument: multiplier
+      result: &id001
+      - '&7Factor configurado: &f×%value%'
+      - '&7Cambio de su fórmula: &f%percent%%'
+    strength:
+      name: '&#db0000🗡 Fuerza'
+      icon: BLAZE_POWDER
+      description:
+      - '&7Mejora los ataques admitidos por su efecto nativo.'
+      - '&7100 puntos NO significan +100% de daño.'
+      - '&7El porcentaje de abajo procede de la fórmula actual.'
+      effect: damage_multiplier
+      argument: multiplier
+      result: *id001
+    crit_chance:
+      name: '&#f7ff85◎ Probabilidad crítica'
+      icon: BONE_MEAL
+      description:
+      - '&7Probabilidad de activar el crítico propio de EcoSkills.'
+      - '&7La fórmula puede añadir una base a tus puntos.'
+      - '&7No es la probabilidad del crítico vanilla al saltar.'
+      effect: make_skill_crit
+      argument: chance
+      result:
+      - '&7Umbral de la fórmula: &f%value%'
+      - '&7Probabilidad del efecto: &f%chance%%'
+      - '&8La probabilidad está limitada al rango 0–100%.'
+    crit_damage:
+      name: '&9☠ Daño crítico'
+      icon: SPECTRAL_ARROW
+      description:
+      - '&7Aumenta el multiplicador del crítico de EcoSkills.'
+      - '&7Solo interviene cuando ese crítico se activa.'
+      - '&7No es el daño total ni los corazones que quitarás.'
+      effect: make_skill_crit
+      argument: multiplier
+      result:
+      - '&7Multiplicador del crítico de EcoSkills: &f×%value%'
+      owner: crit_chance
+    warrior:
+      name: '&e⚔ Guerrero'
+      icon: IRON_SWORD
+      description:
+      - '&7Bonifica ataques a entidades distintas de jugadores.'
+      - '&7Su filtro excluye a jugadores: no es un bono PvP.'
+      effect: damage_multiplier
+      argument: multiplier
+      result: *id001
+    ferocity:
+      name: '&#FF3D5A🔥 Ferocidad'
+      icon: REDSTONE
+      description:
+      - '&7Puede repetir el daño base de un impacto válido.'
+      - '&7La repetición respeta la ruta nativa de daño.'
+      - '&7No significa generar otro crítico independiente.'
+      effect: damage_twice
+      argument: chance
+      result:
+      - '&7Umbral de la fórmula: &f%value%'
+      - '&7Probabilidad del efecto: &f%chance%%'
+      - '&8La probabilidad está limitada al rango 0–100%.'
+    ability_damage:
+      name: '&#C56CFF⚡ Daño de habilidades'
+      icon: BEACON
+      description:
+      - '&7Bonifica los impactos marcados como daño de habilidad.'
+      - '&7No convierte todos tus golpes en habilidades.'
+      - '&7Depende de la atribución nativa del ataque.'
+      effect: damage_multiplier
+      argument: multiplier
+      result: *id001
+    attack_speed:
+      name: '&#FFB000⚔ Velocidad de ataque'
+      icon: GOLDEN_SWORD
+      description:
+      - '&7Modifica el atributo de velocidad de ataque.'
+      - '&7No indica daño ni golpes confirmados por segundo.'
+      - '&7El arma y otros modificadores también intervienen.'
+      effect: attack_speed_multiplier
+      argument: multiplier
+      result: *id001
+    headshot_damage:
+      name: '&#FF0000◎ Daño a la cabeza'
+      icon: ARROW
+      description:
+      - '&7Bonifica los impactos que el evento nativo'
+      - '&7reconoce como tiros a la cabeza.'
+      - '&7No se aplica a todos los disparos.'
+      effect: damage_multiplier
+      argument: multiplier
+      result: *id001
+    rapid_shot:
+      name: '&#FFA500🏹 Disparo rápido'
+      icon: BOW
+      description:
+      - '&7Modifica el umbral de carga del arco del efecto nativo.'
+      - '&7No es un porcentaje directo de daño del proyectil.'
+      - '&7No se interpreta como disparos por segundo.'
+      effect: rapid_bows
+      argument: percent_faster
+      result:
+      - '&7Reducción de carga configurada: &f%value%%'
+      - '&8La suma activa tiene el límite propio del efecto.'
+    knockback_boost:
+      name: '&#FFD700⚔ Empuje'
+      icon: DIAMOND_AXE
+      description:
+      - '&7Modifica el empuje de los ataques admitidos.'
+      - '&7No es daño adicional; depende también del objetivo.'
+      effect: knockback_multiplier
+      argument: multiplier
+      result: *id001
+    speed:
+      name: '&#42f566⚡ Velocidad'
+      icon: SUGAR
+      description:
+      - '&7Modifica tu atributo de velocidad de movimiento.'
+      - '&7No indica bloques por segundo; otros efectos se combinan.'
+      effect: movement_speed_multiplier
+      argument: multiplier
+      result: *id001
+    jump_boost:
+      name: '&#00FF7F⏶ Salto mejorado'
+      icon: SLIME_BLOCK
+      description:
+      - '&7Modifica el atributo de fuerza del salto.'
+      - '&7No expresa directamente la altura en bloques.'
+      effect: jump_strength_multiplier
+      argument: multiplier
+      result: *id001
+    potion_duration:
+      name: '&5⌛ Duración de pociones'
+      icon: BREWING_STAND
+      description:
+      - '&7Modifica la duración al aplicar pociones compatibles.'
+      - '&7No indica la duración de los efectos que ya tenías.'
+      effect: potion_duration_multiplier
+      argument: multiplier
+      result: *id001
+    wisdom:
+      name: '&#40ffe6🌊 Inteligencia'
+      icon: LAPIS_LAZULI
+      description:
+      - '&7Interviene en el límite de maná configurado.'
+      - '&7También modifica la experiencia vanilla del efecto.'
+      - '&7No equivale a XP de skills ni XP de mascotas.'
+      effect: xp_multiplier
+      argument: multiplier
+      result:
+      - '&7Factor de XP vanilla de esta fórmula: &f×%value%'
+      - '&8Consulta tu maná actual y máximo en el resumen.'
+    treasure_chance:
+      name: '&#00ced1☆ Suerte para tesoros'
+      icon: CHEST
+      description:
+      - '&7Añade puntos al atributo nativo de Suerte.'
+      - '&7Solo afecta a botines que consulten ese atributo.'
+      - '&7No es una probabilidad universal de tesoro.'
+      effect: add_luck
+      argument: amount
+      result:
+      - '&7Suerte añadida por esta fórmula: &f+%value%'
+    mining_fortune:
+      name: '&6◆ Fortuna de minería'
+      icon: GOLD_ORE
+      description:
+      - '&7Aumenta objetos de los minerales configurados.'
+      - '&7No funciona sobre bloques colocados por jugadores.'
+      - '&7La regla actual excluye herramientas con Toque de seda.'
+      effect: multiply_drops
+      argument: multiplier
+      result:
+      - '&7Factor configurado: &f×%value%'
+      - '&7Factor entero del efecto actual: &f×%rounded%'
+      - '&8El motor redondea el factor; no es una probabilidad.'
+    farming_fortune:
+      name: '&6◆ Fortuna de agricultura'
+      icon: GOLDEN_HOE
+      description:
+      - '&7Aumenta objetos de los cultivos configurados.'
+      - '&7Los cultivos que lo exigen deben estar maduros.'
+      - '&7No funciona sobre bloques colocados por jugadores.'
+      effect: multiply_drops
+      argument: multiplier
+      result:
+      - '&7Factor configurado: &f×%value%'
+      - '&7Factor entero del efecto actual: &f×%rounded%'
+      - '&8El motor redondea el factor; no es una probabilidad.'
+    foraging_fortune:
+      name: '&6◆ Fortuna de tala'
+      icon: JUNGLE_SAPLING
+      description:
+      - '&7Aumenta objetos de los troncos y tallos configurados.'
+      - '&7No funciona sobre bloques colocados por jugadores.'
+      effect: multiply_drops
+      argument: multiplier
+      result:
+      - '&7Factor configurado: &f×%value%'
+      - '&7Factor entero del efecto actual: &f×%rounded%'
+      - '&8El motor redondea el factor; no es una probabilidad.'
+potions:
+  speed: '&fVelocidad'
+  slowness: '&fLentitud'
+  haste: '&fPrisa minera'
+  mining_fatigue: '&fFatiga minera'
+  strength: '&fFuerza'
+  instant_health: '&fCuración instantánea'
+  instant_damage: '&fDaño instantáneo'
+  jump_boost: '&fSalto'
+  nausea: '&fNáuseas'
+  regeneration: '&fRegeneración'
+  resistance: '&fResistencia'
+  fire_resistance: '&fResistencia al fuego'
+  water_breathing: '&fRespiración acuática'
+  invisibility: '&fInvisibilidad'
+  blindness: '&fCeguera'
+  night_vision: '&fVisión nocturna'
+  hunger: '&fHambre'
+  weakness: '&fDebilidad'
+  poison: '&fVeneno'
+  wither: '&fDescomposición'
+  health_boost: '&fSalud adicional'
+  absorption: '&fAbsorción'
+  saturation: '&fSaturación'
+  glowing: '&fBrillo'
+  levitation: '&fLevitación'
+  luck: '&fSuerte'
+  unluck: '&fMala suerte'
+  slow_falling: '&fCaída lenta'
+  conduit_power: '&fPoder del conducto'
+  dolphins_grace: '&fGracia de delfín'
+  bad_omen: '&fMal presagio'
+  hero_of_the_village: '&fHéroe de la aldea'
+  darkness: '&fOscuridad'
+  trial_omen: '&fPresagio de prueba'
+  raid_omen: '&fPresagio de asalto'
+  wind_charged: '&fCarga de viento'
+  weaving: '&fTejido'
+  oozing: '&fRezumar'
+  infested: '&fInfestación'

@@ -1,0 +1,7 @@
+strength:
+  multiplier: 1 + (%level% * 0.0025)
+crit_chance:
+  chance: 30 + %level%
+  multiplier: 1.5 + (%ecoskills_crit_damage% * 0.005)
+mining_fortune:
+  multiplier: 1 + (%level% * 0.01)
