@@ -61,6 +61,10 @@ public interface EnchantingXPProvider {
     Optional<Session> session(UUID playerId);
     /** MAIN entry BEFORE checkout; result completes only after original attribution is durably retained. */
     CompletionStage<EnchantingXPConsumer.Attribution> preparePurchase(Plugin owner,UUID playerId,UUID operationId);
+    /** MAIN, authorized purchase owner only, before payment; quote is base XP, not final modified/capped XP. */
+    default CompletionStage<EnchantingPurchaseQuote> quotePurchase(Plugin owner,EnchantingPurchaseQuote.Context context) {
+        return java.util.concurrent.CompletableFuture.failedStage(new UnsupportedOperationException("Purchase quote API unavailable"));
+    }
     /** Always reuse the same confirmation. Receipt APPLIED, not future completion alone, confirms a grant. */
     CompletionStage<Observation> grantConfirmedPurchase(Plugin owner,EnchantingPurchaseAuthority.Confirmation confirmation);
     /** One bounded recovery pass, no polling. MAIN entry, max32 claims per kind. */

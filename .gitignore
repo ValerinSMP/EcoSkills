@@ -22,3 +22,11 @@ gradle-app.setting
 # Mac OSX
 .DS_Store
 .worktrees
+
+# Local documentation and AI working files (upstream tracked files stay tracked).
+*.md
+.codex/
+.agents/
+graphify-out/
+.opencode/
+opencode.json

@@ -17,7 +17,7 @@ public record EnchantingPurchaseEvidence(
         UUID operationId, UUID playerId, String scope, UUID sessionId,
         String enchantmentKey, int fromTier, int toTier, Mode mode,
         int vanillaLevelsConsumed, String tariffVersion, String contextHash,
-        UUID deliveryReceiptId, long confirmedAtEpochMillis) {
+        UUID deliveryReceiptId, long confirmedAtEpochMillis, EnchantingPurchaseQuote xpQuote) {
     public static final int SCHEMA_VERSION = 1;
     public enum Mode { VANILLA_XP, CUSTOM_SHARDS, CUSTOM_GEMS, VANILLA_OVERLEVEL_XP_SHARDS }
     public EnchantingPurchaseEvidence {
@@ -38,7 +38,18 @@ public record EnchantingPurchaseEvidence(
             throw new IllegalArgumentException("Consumption does not match mode");
         Objects.requireNonNull(contextHash);
         if (!contextHash.matches("[0-9a-f]{64}")) throw new IllegalArgumentException("Invalid contextHash");
+        if(xpQuote!=null&&!xpQuote.context().equals(new EnchantingPurchaseQuote.Context(operationId,playerId,scope,sessionId,enchantmentKey,fromTier,toTier,mode,vanillaLevelsConsumed)))throw new IllegalArgumentException("Quote/evidence context conflict");
     }
+    /** Original SDK constructor retained byte-for-byte at the ABI boundary; legacy payload/codec stays v1. */
+    public EnchantingPurchaseEvidence(UUID operationId,UUID playerId,String scope,UUID sessionId,String enchantmentKey,
+            int fromTier,int toTier,Mode mode,int vanillaLevelsConsumed,String tariffVersion,String contextHash,
+            UUID deliveryReceiptId,long confirmedAtEpochMillis) {
+        this(operationId,playerId,scope,sessionId,enchantmentKey,fromTier,toTier,mode,vanillaLevelsConsumed,tariffVersion,contextHash,deliveryReceiptId,confirmedAtEpochMillis,null);
+    }
+    public EnchantingPurchaseEvidence withXPQuote(EnchantingPurchaseQuote quote) {
+        return new EnchantingPurchaseEvidence(operationId,playerId,scope,sessionId,enchantmentKey,fromTier,toTier,mode,vanillaLevelsConsumed,tariffVersion,contextHash,deliveryReceiptId,confirmedAtEpochMillis,Objects.requireNonNull(quote));
+    }
+    public int schemaVersion(){return xpQuote==null?1:2;}
     private static String token(String value, String name) {
         Objects.requireNonNull(value, name);
         if (!value.matches("[A-Za-z0-9._:/-]{1,96}")) throw new IllegalArgumentException("Invalid " + name);
@@ -46,7 +57,7 @@ public record EnchantingPurchaseEvidence(
     }
     /** Stable across JVMs/retries; all bound payload fields participate. Not an authentication signature. */
     public String payloadHash() {
-        String[] fields = {Integer.toString(SCHEMA_VERSION), operationId.toString(), playerId.toString(), scope,
+        String[] fields = {Integer.toString(xpQuote==null?SCHEMA_VERSION:2), operationId.toString(), playerId.toString(), scope,
             sessionId.toString(), enchantmentKey, Integer.toString(fromTier), Integer.toString(toTier), mode.name(),
             Integer.toString(vanillaLevelsConsumed), tariffVersion, contextHash, deliveryReceiptId.toString(),
             Long.toString(confirmedAtEpochMillis)};
@@ -54,6 +65,10 @@ public record EnchantingPurchaseEvidence(
         for (String field : fields) {
             byte[] bytes = field.getBytes(StandardCharsets.UTF_8);
             hash.update(ByteBuffer.allocate(4).putInt(bytes.length).array()); hash.update(bytes);
+        }
+        if(xpQuote!=null) {
+            byte[] bytes=xpQuote.payloadHash().getBytes(StandardCharsets.UTF_8);
+            hash.update(ByteBuffer.allocate(4).putInt(bytes.length).array());hash.update(bytes);
         }
         return HexFormat.of().formatHex(hash.digest());
     }

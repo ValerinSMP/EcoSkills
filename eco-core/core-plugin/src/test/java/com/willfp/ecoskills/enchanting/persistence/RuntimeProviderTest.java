@@ -88,6 +88,39 @@ class RuntimeProviderTest {
         return new EnchantingPurchaseAuthority.Confirmation("survival",operation,evidence.deliveryReceiptId());
     }
     @AfterEach void close()throws Exception {if(provider!=null)main(()->{provider.close();return null;});if(writer!=null)writer.shutdown();main.shutdownNow();}
+    @Test void quotedPurchaseUsesOriginalRewardAcrossReplayAndPolicyChange()throws Exception {
+        var confirmation=purchase(UUID.randomUUID());var proof=confirmations.get(confirmation.operationId());
+        var quote=new EnchantingPurchasePolicy("simulation/1",EnchantingPurchasePolicy.Curve.power(100,1),Map.of()).quote(EnchantingPurchaseQuote.Context.of(proof.evidence()));
+        var original=proof.evidence().withXPQuote(quote);
+        confirmations.put(confirmation.operationId(),new EnchantingPurchaseAuthority.Verification(proof.state(),original,proof.originalAttribution(),null));
+        var first=await(main(()->provider.grantConfirmedPurchase(sourceOwner,confirmation)));
+        assertEquals(100.0,first.receipt().finalXP());assertEquals(original,first.receipt().evidence());
+        var changed=new EnchantingPurchasePolicy("simulation/2",EnchantingPurchasePolicy.Curve.power(200,1),Map.of()).quote(EnchantingPurchaseQuote.Context.of(proof.evidence()));
+        confirmations.put(confirmation.operationId(),new EnchantingPurchaseAuthority.Verification(proof.state(),proof.evidence().withXPQuote(changed),proof.originalAttribution(),null));
+        assertEquals(first,await(main(()->provider.grantConfirmedPurchase(sourceOwner,confirmation))));assertEquals(1,modifiers.get());
+    }
+    @Test void changedPolicyCannotReplaceAnUncertainDurableCalculation()throws Exception {
+        var c=purchase(UUID.randomUUID());var proof=confirmations.get(c.operationId());var context=EnchantingPurchaseQuote.Context.of(proof.evidence());
+        var first=proof.evidence().withXPQuote(new EnchantingPurchasePolicy("pending/1",EnchantingPurchasePolicy.Curve.power(100,1),Map.of()).quote(context));
+        confirmations.put(c.operationId(),new EnchantingPurchaseAuthority.Verification(proof.state(),first,proof.originalAttribution(),null));
+        failModifier.set(true);assertEquals(EnchantingXPProvider.State.UNKNOWN,await(main(()->provider.grantConfirmedPurchase(sourceOwner,c))).state());
+        var different=proof.evidence().withXPQuote(new EnchantingPurchasePolicy("pending/2",EnchantingPurchasePolicy.Curve.power(200,1),Map.of()).quote(context));
+        failModifier.set(false);confirmations.put(c.operationId(),new EnchantingPurchaseAuthority.Verification(proof.state(),different,proof.originalAttribution(),null));
+        assertEquals(EnchantingXPProvider.State.PAYLOAD_CONFLICT,await(main(()->provider.grantConfirmedPurchase(sourceOwner,c))).state());assertEquals(1,modifiers.get());
+    }
+    @Test void zeroQuotedRewardCommitsReceiptWithoutProgressAndStillReplaysOnce()throws Exception {
+        var c=purchase(UUID.randomUUID());var proof=confirmations.get(c.operationId());
+        var q=new EnchantingPurchasePolicy("zero-test/1",EnchantingPurchasePolicy.Curve.power(0,1),Map.of()).quote(EnchantingPurchaseQuote.Context.of(proof.evidence()));
+        confirmations.put(c.operationId(),new EnchantingPurchaseAuthority.Verification(proof.state(),proof.evidence().withXPQuote(q),proof.originalAttribution(),null));
+        var first=await(main(()->provider.grantConfirmedPurchase(sourceOwner,c)));
+        assertEquals(EnchantingXPProvider.State.APPLIED,first.state());assertEquals(0,first.receipt().finalXP());assertEquals(0,first.receipt().nativeLevel());
+        assertEquals(first,await(main(()->provider.grantConfirmedPurchase(sourceOwner,c))));assertEquals(1,modifiers.get());
+    }
+    @Test void prePaymentDefaultQuoteIsNotEvidenceAndDoesNotGrantProgress()throws Exception {
+        var confirmation=purchase(UUID.randomUUID());var proof=confirmations.get(confirmation.operationId());
+        var quote=await(main(()->provider.quotePurchase(sourceOwner,EnchantingPurchaseQuote.Context.of(proof.evidence()))));
+        assertEquals(EnchantingPurchaseXP.FORMULA_VERSION,quote.policyVersion());assertEquals(0,modifiers.get());assertEquals(0,grants.get());
+    }
     @Test void simulatedAuthorityFlowRepeatsOneNativeAwardAndOneModifierAndRetainsOriginalCapture()throws Exception {
         var c=purchase(UUID.randomUUID());var first=await(main(()->provider.grantConfirmedPurchase(sourceOwner,c)));
         assertEquals(EnchantingXPProvider.State.APPLIED,first.state());assertEquals(51.43928459844674,first.receipt().finalXP());

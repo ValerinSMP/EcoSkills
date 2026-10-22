@@ -135,6 +135,20 @@ public final class DurableRuntimeProvider implements EnchantingXPProvider,AutoCl
         });flow.whenComplete((v,e)->admission.release());
         return boundedResponse(flow,()->null).thenCompose(value->value==null?CompletableFuture.failedStage(new TimeoutException("Capture uncertain; reuse operation")):CompletableFuture.completedStage(value));
     }
+    @Override public CompletionStage<EnchantingPurchaseQuote> quotePurchase(Plugin owner,EnchantingPurchaseQuote.Context context){
+        owner(owner,true);Objects.requireNonNull(context);
+        if(!readiness().ready()||!scope.equals(context.scope())||!context.sessionId().equals(sessions.get(context.playerId()))||!nativeQueue.ready(context.playerId()))return CompletableFuture.failedStage(new IllegalStateException("Quote session/provider unavailable"));
+        if(!admission.tryAcquire())return CompletableFuture.failedStage(new RejectedExecutionException("Quote admission full"));
+        var original=authority;
+        CompletionStage<EnchantingPurchaseQuote> flow;
+        try{flow=original.quotePurchase(context);}catch(RuntimeException|LinkageError failure){admission.release();return CompletableFuture.failedStage(failure);}
+        if(flow==null){admission.release();return CompletableFuture.failedStage(new IllegalStateException("Authority quote absent"));}
+        var checked=flow.thenCompose(quote->onMain(()->{
+            if(authority!=original||closed||reloaded||quote==null||!context.sessionId().equals(sessions.get(context.playerId()))||!quote.context().equals(context))throw new IllegalArgumentException("Quote authority/context changed");return quote;
+        }));
+        checked.whenComplete((v,e)->admission.release());
+        return boundedResponse(checked,()->null).thenCompose(quote->quote==null?CompletableFuture.failedStage(new TimeoutException("Quote uncertain; reuse original operation")):CompletableFuture.completedStage(quote));
+    }
     /** A fresh purchase waits for real admission; retries keep their durable original attribution. MAIN only. */
     private CompletionStage<EnchantingXPConsumer.AttributionRequest> prepareAttributionRequest(UUID player,UUID operation,EnchantingXPConsumer.AttributionRequest intent){
         main();

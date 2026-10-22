@@ -13,5 +13,10 @@ public interface EnchantingPurchaseAuthority {
     record Verification(State state,EnchantingPurchaseEvidence evidence,EnchantingXPConsumer.Attribution originalAttribution,String reason) {
         public Verification{Objects.requireNonNull(state);if(state==State.CONFIRMED?(evidence==null||originalAttribution==null):(evidence!=null||originalAttribution!=null))throw new IllegalArgumentException("Evidence availability");}
     }
+    /** MAIN entry before payment. Implementations must retain/reuse their original durable quote per operation.
+     * The compatible default explicitly preserves the old effective-level policy. This is not purchase proof. */
+    default CompletionStage<EnchantingPurchaseQuote> quotePurchase(EnchantingPurchaseQuote.Context context) {
+        return java.util.concurrent.CompletableFuture.completedFuture(EnchantingPurchaseQuote.legacy(context));
+    }
     CompletionStage<Verification> verifyConfirmedPurchase(Confirmation confirmation);
 }

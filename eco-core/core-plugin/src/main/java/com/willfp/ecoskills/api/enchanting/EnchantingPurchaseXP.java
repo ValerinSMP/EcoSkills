@@ -19,7 +19,7 @@ public final class EnchantingPurchaseXP {
     }
     /** Base only: native legitimate modifiers still belong to the future grant provider. Never enchant_item x3. */
     public static double baseXP(EnchantingPurchaseEvidence purchase) {
-        return 3.5 * StrictMath.pow(effectiveLevels(purchase), 1.5);
+        return purchase.xpQuote()==null?3.5 * StrictMath.pow(effectiveLevels(purchase), 1.5):purchase.xpQuote().baseXP();
     }
     /** Proposed boundary: after legitimate modifiers; inputs and committed daily usage must be provider-owned. */
     public static double limitedFinalXP(double committedToday, double modifiedFinalXP) {
