@@ -4,6 +4,7 @@ import com.willfp.eco.core.config.ConfigType
 import com.willfp.eco.core.config.ExtendableConfig
 import com.willfp.eco.core.gui.menu
 import com.willfp.eco.core.gui.slot
+import com.willfp.eco.core.gui.slot.FillerMask
 import com.willfp.eco.core.items.builder.ItemStackBuilder
 import com.willfp.eco.core.placeholder.context.placeholderContext
 import com.willfp.eco.util.evaluateExpression
@@ -93,10 +94,10 @@ object CombatStatsGUI {
         val pets = org.bukkit.Bukkit.getPluginCommand("vpets")?.takeIf {
             it.plugin.name == "vPets" && it.plugin.isEnabled
         }
-        val filler = item(Material.BLACK_STAINED_GLASS_PANE, " ", emptyList())
         val view = menu(6) {
             title = config.getString("titles.summary")
-            for (row in 1..6) for (column in 1..9) setSlot(row, column, slot(filler))
+            // Background must not compete with content in the native MIDDLE layer.
+            setMask(FillerMask(Material.BLACK_STAINED_GLASS_PANE, *Array(6) { "111111111" }))
             fun put(at: SummarySlot, icon: ItemStack) = setSlot(at.row, at.column, slot(icon))
             put(SummarySlot.CHARACTER, item(Material.PLAYER_HEAD,
                 text("character").replace("%player%", player.name), current))
@@ -151,11 +152,9 @@ object CombatStatsGUI {
         if (!player.isOnline) return
         val current = resources(player)
         if (screen == "summary") { renderSummary(player, current); return }
-        val filler = item(Material.BLACK_STAINED_GLASS_PANE, " ", emptyList())
         val view = menu(4) {
             title = config.getString("titles.$screen")
-            for (row in 1..4) for (column in 1..9) setSlot(row, column,
-                slot(filler))
+            setMask(FillerMask(Material.BLACK_STAINED_GLASS_PANE, *Array(4) { "111111111" }))
             setSlot(1, 5, slot(item(Material.PLAYER_HEAD, text("character"), current)))
             when (screen) {
                 "combat" -> for ((column, statId) in listOf(3 to "strength", 5 to "crit_chance", 7 to "crit_damage")) {

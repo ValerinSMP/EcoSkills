@@ -13,6 +13,8 @@ dependencies {
     testImplementation("io.papermc.paper:paper-api:1.21.8-R0.1-SNAPSHOT")
     testImplementation("com.h2database:h2:2.3.232")
     testImplementation("org.junit.jupiter:junit-jupiter:5.13.4")
+    // Optional pinned backend for the native GUI layer regression; never bundled in runtime.
+    providers.gradleProperty("ecoRuntimeJar").orNull?.let { testRuntimeOnly(files(it)) }
     testRuntimeOnly("com.github.ben-manes.caffeine:caffeine:3.2.0")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
