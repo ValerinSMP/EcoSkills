@@ -67,6 +67,16 @@ public interface EnchantingXPProvider {
     }
     /** Always reuse the same confirmation. Receipt APPLIED, not future completion alone, confirms a grant. */
     CompletionStage<Observation> grantConfirmedPurchase(Plugin owner,EnchantingPurchaseAuthority.Confirmation confirmation);
+    /** MAIN entry, exact registered purchase authority only. Asynchronous read-only lookup of
+     * the ORIGINAL scope/operation/delivery binding. Does not verify with the authority, grant,
+     * admit, publish, recover or acknowledge. APPLIED proves a durable receipt, not cache publication
+     * or consumer acknowledgement. NOT_FOUND only means no committed receipt was observed;
+     * UNKNOWN/timeout/NOT_FOUND never authorize a retry or a new identity.
+     * Response deadline <=15s; JDBC executes off MAIN with bounded queue/query timeouts.
+     */
+    default CompletionStage<Observation> lookupPurchaseReceipt(Plugin owner,EnchantingPurchaseAuthority.Confirmation original) {
+        return java.util.concurrent.CompletableFuture.completedStage(new Observation(State.UNAVAILABLE,"purchase_receipt_lookup_unsupported",null));
+    }
     /** One bounded recovery pass, no polling. MAIN entry, max32 claims per kind. */
     CompletionStage<Integer> recoverDeliveries(Plugin owner,int limit);
     /** Capability is bound to an authorized owner/scope. It must not be shared with other plugins. */

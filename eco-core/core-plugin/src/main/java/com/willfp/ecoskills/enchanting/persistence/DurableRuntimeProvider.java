@@ -202,6 +202,19 @@ public final class DurableRuntimeProvider implements EnchantingXPProvider,AutoCl
         grantTail.whenComplete((v,e)->admission.release());
         return boundedResponse(result,()->new Observation(State.UNKNOWN,"response_timeout_reuse_confirmation",null));
     }
+    @Override public CompletionStage<Observation> lookupPurchaseReceipt(Plugin owner,EnchantingPurchaseAuthority.Confirmation original){
+        owner(owner,true);Objects.requireNonNull(original);
+        if(authority==null)return CompletableFuture.completedStage(unavailable("purchase_authority_not_registered"));
+        if(!scope.equals(original.scope()))return CompletableFuture.completedStage(unavailable("scope_not_authorized"));
+        if(!initialized||closed)return CompletableFuture.completedStage(unavailable("native_backend_unavailable"));
+        if(!admission.tryAcquire())return CompletableFuture.completedStage(unavailable("admission_full"));
+        var registered=authority;
+        var read=sql(()->store.lookupPurchaseReceipt(original)).thenCompose(observed->onMain(()->
+            authority==registered&&owner==host.purchaseOwner()?observed:unavailable("purchase_authority_changed")))
+            .exceptionally(error->new Observation(State.UNKNOWN,"purchase_receipt_read_uncertain",null));
+        read.whenComplete((v,e)->admission.release());
+        return boundedResponse(read,()->new Observation(State.UNKNOWN,"purchase_receipt_read_timeout",null));
+    }
     private CompletionStage<Observation> grant(EnchantingPurchaseEvidence evidence){
         var key=new ReceiptKey(scope,evidence.operationId(),evidence.awardId());
         return sql(()->store.lookupReceipt(key)).thenCompose(previous->{

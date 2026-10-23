@@ -88,6 +88,42 @@ class RuntimeProviderTest {
         return new EnchantingPurchaseAuthority.Confirmation("survival",operation,evidence.deliveryReceiptId());
     }
     @AfterEach void close()throws Exception {if(provider!=null)main(()->{provider.close();return null;});if(writer!=null)writer.shutdown();main.shutdownNow();}
+    @Test void purchaseReceiptLookupIsAuthorizedBoundAndReadOnly()throws Exception {
+        var c=purchase(UUID.randomUUID());
+        assertEquals(EnchantingXPProvider.State.NOT_FOUND,await(main(()->provider.lookupPurchaseReceipt(sourceOwner,c))).state());
+        var applied=await(main(()->provider.grantConfirmedPurchase(sourceOwner,c)));
+        assertEquals(EnchantingXPProvider.State.APPLIED,applied.state());
+        int modified=modifiers.get(),captured=captures.get(),flushed=flushes.get();
+        var before=new HashMap<>(cache);
+        // A blocked verification callback must never be called by the lookup.
+        proofGate.set(new CompletableFuture<>());
+        assertEquals(applied,await(main(()->provider.lookupPurchaseReceipt(sourceOwner,c))));
+        // Enforce SELECT-only access on the actual JDBC path, independent of background outbox work.
+        var readPool=mock(DataSource.class);
+        when(readPool.getConnection()).thenAnswer(invocation->{
+            var connection=pool.getConnection();
+            return java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),new Class<?>[]{java.sql.Connection.class},(proxy,method,args)->{
+                if(method.getName().equals("prepareStatement"))assertTrue(((String)args[0]).startsWith("SELECT "));
+                if(Set.of("commit","rollback","createStatement").contains(method.getName()))fail("Write/transaction in lookup: "+method.getName());
+                try{return method.invoke(connection,args);}catch(java.lang.reflect.InvocationTargetException failure){throw failure.getCause();}
+            });
+        });
+        var readStore=new DurableEnchantingStore(readPool,"eco_",gateway);
+        assertEquals(applied,readStore.lookupPurchaseReceipt(c));
+        var changed=new EnchantingPurchaseAuthority.Confirmation(c.scope(),c.operationId(),UUID.randomUUID());
+        assertEquals(EnchantingXPProvider.State.PAYLOAD_CONFLICT,await(main(()->provider.lookupPurchaseReceipt(sourceOwner,changed))).state());
+        var scope=new EnchantingPurchaseAuthority.Confirmation("other",c.operationId(),c.deliveryReceiptId());
+        assertEquals(EnchantingXPProvider.State.UNAVAILABLE,await(main(()->provider.lookupPurchaseReceipt(sourceOwner,scope))).state());
+        var rejected=assertThrows(ExecutionException.class,()->main(()->provider.lookupPurchaseReceipt(consumerOwner,c)));
+        assertInstanceOf(SecurityException.class,rejected.getCause());
+        assertThrows(IllegalStateException.class,()->provider.lookupPurchaseReceipt(sourceOwner,c));
+        assertEquals(modified,modifiers.get());assertEquals(captured,captures.get());assertEquals(flushed,flushes.get());assertEquals(before,cache);
+        // Reads remain available after reload blocks grants; they never run recovery/admission.
+        main(()->{provider.configurationChanged();return null;});
+        assertEquals(applied,await(main(()->provider.lookupPurchaseReceipt(sourceOwner,c))));
+        main(()->{provider.participantDisabled(sourceOwner);return null;});
+        assertEquals(EnchantingXPProvider.State.UNAVAILABLE,await(main(()->provider.lookupPurchaseReceipt(sourceOwner,c))).state());
+    }
     @Test void quotedPurchaseUsesOriginalRewardAcrossReplayAndPolicyChange()throws Exception {
         var confirmation=purchase(UUID.randomUUID());var proof=confirmations.get(confirmation.operationId());
         var quote=new EnchantingPurchasePolicy("simulation/1",EnchantingPurchasePolicy.Curve.power(100,1),Map.of()).quote(EnchantingPurchaseQuote.Context.of(proof.evidence()));

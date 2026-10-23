@@ -410,6 +410,20 @@ public final class DurableEnchantingStore {
     public EnchantingXPProvider.Observation lookupReceipt(EnchantingXPProvider.ReceiptKey key)throws SQLException {
         return transaction(c->observe(c,key));
     }
+    /** SELECT-only, no transaction/write/admission/recovery; committed rows are immutable. */
+    public EnchantingXPProvider.Observation lookupPurchaseReceipt(com.willfp.ecoskills.api.enchanting.EnchantingPurchaseAuthority.Confirmation original)throws SQLException {
+        try(var c=pool.getConnection()) {
+            UUID award;
+            try(var s=statement(c,"SELECT award_id FROM "+table("receipts")+" WHERE scope=? AND operation_id=?",original.scope(),original.operationId());var r=s.executeQuery()) {
+                if(!r.next())return observation(EnchantingXPProvider.State.NOT_FOUND,"receipt_not_found",null);
+                try{award=UUID.fromString(r.getString(1));}catch(IllegalArgumentException corrupt){return observation(EnchantingXPProvider.State.REJECTED,"receipt_corrupt",null);}
+            }
+            var observed=observe(c,new EnchantingXPProvider.ReceiptKey(original.scope(),original.operationId(),award));
+            if(observed.state()==EnchantingXPProvider.State.APPLIED&&!observed.receipt().evidence().deliveryReceiptId().equals(original.deliveryReceiptId()))
+                return observation(EnchantingXPProvider.State.PAYLOAD_CONFLICT,"original_confirmation_changed",null);
+            return observed;
+        }
+    }
     private EnchantingXPProvider.Observation observe(Connection c,EnchantingXPProvider.ReceiptKey key)throws SQLException {
         try(var s=statement(c,"SELECT award_id,final_xp,level_value,xp_value,revision,evidence_payload,session_id,capture_id,attribution,payload_hash,player FROM "+table("receipts")+" WHERE scope=? AND operation_id=?",key.scope(),key.operationId());var r=s.executeQuery()) {
             if(!r.next())return observation(EnchantingXPProvider.State.NOT_FOUND,"receipt_not_found",null);
